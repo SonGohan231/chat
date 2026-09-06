@@ -11,11 +11,7 @@ import pl.somaskan.questgpt.data.Board
 import pl.somaskan.questgpt.navigation.AppScreen
 
 @Composable
-fun MultiBoardShell(
-    current: AppScreen,
-    onScreen: (AppScreen) -> Unit,
-    body: @Composable () -> Unit,
-) {
+fun MultiBoardShell(current: AppScreen, onScreen: (AppScreen) -> Unit, body: @Composable () -> Unit) {
     Row(Modifier.fillMaxSize()) {
         NavigationRail {
             AppScreen.entries.forEach { screen ->
@@ -27,7 +23,7 @@ fun MultiBoardShell(
                 )
             }
         }
-        Box(Modifier.fillMaxSize().padding(12.dp)) { body() }
+        Box(Modifier.fillMaxSize().padding(16.dp)) { body() }
     }
 }
 
@@ -35,15 +31,17 @@ fun MultiBoardShell(
 fun BoardsScreen() {
     val boards = remember {
         mutableStateListOf(
-            Board("chat", "Rozmowa", "Bieżący kontekst i zadania"),
-            Board("research", "Research", "Materiały, linki i analizy"),
-            Board("files", "Pliki", "Dokumenty robocze"),
+            Board("chat", "Rozmowa", "Czat i bieżący kontekst"),
+            Board("research", "Research", "Analizy, źródła i linki"),
+            Board("files", "Pliki projektu", "Dokumenty i materiały"),
+            Board("tasks", "Zadania", "Rzeczy do wykonania"),
+            Board("ideas", "Pomysły", "Luźne koncepcje i rozwój"),
         )
     }
     var name by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Plansze", style = MaterialTheme.typography.headlineSmall)
-        Text("Oddzielne przestrzenie robocze. Każda może mieć własny kontekst, pliki i notatki.")
+        Text("Możesz rozdzielać pracę na dowolną liczbę czytelnych przestrzeni i później podłączać do każdej osobny kontekst, pliki, narzędzia i historię.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(name, { name = it }, label = { Text("Nazwa nowej planszy") }, modifier = Modifier.weight(1f))
             Button(onClick = {
@@ -56,7 +54,7 @@ fun BoardsScreen() {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(boards, key = { it.id }) { board ->
                 ElevatedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
+                    Column(Modifier.padding(14.dp)) {
                         Text(board.name, style = MaterialTheme.typography.titleMedium)
                         if (board.description.isNotBlank()) Text(board.description)
                     }

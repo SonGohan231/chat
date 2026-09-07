@@ -12,20 +12,25 @@ import pl.somaskan.questgpt.QuestEndpoints
 
 @Composable
 fun VoiceScreen(state: String, onToggle: () -> Unit) {
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
         Text("Rozmowa głosowa", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         ElevatedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(state, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Dwukierunkowe audio OpenAI Realtime. QuestGPT pobiera krótki token z bezpiecznego backendu i łączy się bezpośrednio z OpenAI.",
+                    "Dwukierunkowe audio OpenAI Realtime. W trybie ADB Vision GPT dostaje aktualny widok Questa i może używać bezpiecznych narzędzi tap/swipe/tekst podczas rozmowy.",
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
         }
+        AdbVisionStatusCard(compact = false)
         Button(onClick = onToggle, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)) {
             Text(if (state.startsWith("Połączono")) "Zatrzymaj rozmowę" else "Uruchom GPT Live")
         }
+        Spacer(Modifier.height(18.dp))
     }
 }
 
@@ -127,12 +132,19 @@ fun SettingsScreen(
                 selected = section == 1,
                 onClick = { section = 1 },
                 shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                label = { Text("ADB Wireless") }
+                label = { Text("ADB + Agent") }
             )
         }
 
         if (section == 1) {
-            WirelessAdbScreen()
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                AdbVisionStatusCard(compact = false)
+                WirelessAdbScreen(embedded = true)
+                Spacer(Modifier.height(18.dp))
+            }
         } else {
             Column(
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
@@ -167,7 +179,7 @@ fun SettingsScreen(
 
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Text(
-                        "Zdjęcia i dokumenty są udostępniane przez systemowy picker, screenshot przez MediaProjection, a pliki przez Storage Access Framework. ADB Wireless jest dostępne w drugiej zakładce.",
+                        "ADB Agent łączy obraz ekranu, drzewo UIAutomator i bezpieczne sterowanie. Auto Vision aktualizuje klatkę adaptacyjnie, a GPT może wykonać wyłącznie ograniczony zestaw akcji interfejsu.",
                         Modifier.padding(18.dp),
                         style = MaterialTheme.typography.bodyLarge
                     )

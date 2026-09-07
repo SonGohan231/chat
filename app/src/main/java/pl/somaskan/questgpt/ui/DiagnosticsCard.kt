@@ -12,7 +12,7 @@ import pl.somaskan.questgpt.DiagnosticReport
 import pl.somaskan.questgpt.QuestDiagnostics
 
 @Composable
-fun DiagnosticsCard(backendUrl: String) {
+fun DiagnosticsCard() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var report by remember { mutableStateOf<DiagnosticReport?>(null) }
@@ -20,9 +20,9 @@ fun DiagnosticsCard(backendUrl: String) {
 
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Diagnostyka i automatyczna naprawa", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Diagnostyka", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(
-                "Sprawdza backend, mikrofon, usługi w tle, Wireless ADB, shell, screenshot i UIAutomator. Naprawa ponownie uruchamia usługi i próbuje odzyskać ADB oraz rozmowę głosową.",
+                "Sprawdza bezpośrednie połączenie z OpenAI, dostęp do modeli, mikrofon, usługi w tle, Wireless ADB, shell, screenshot i UIAutomator.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -30,24 +30,24 @@ fun DiagnosticsCard(backendUrl: String) {
                     onClick = {
                         busy = true
                         scope.launch {
-                            report = QuestDiagnostics.run(context, backendUrl)
+                            report = QuestDiagnostics.run(context)
                             busy = false
                         }
                     },
                     enabled = !busy,
                     modifier = Modifier.weight(1f),
-                ) { Text(if (busy) "Sprawdzanie…" else "Uruchom diagnostykę") }
+                ) { Text(if (busy) "Sprawdzanie…" else "Testuj wszystko") }
                 FilledTonalButton(
                     onClick = {
                         busy = true
                         scope.launch {
-                            report = QuestDiagnostics.repair(context, backendUrl)
+                            report = QuestDiagnostics.repair(context)
                             busy = false
                         }
                     },
                     enabled = !busy,
                     modifier = Modifier.weight(1f),
-                ) { Text("Napraw i sprawdź") }
+                ) { Text("Napraw + test") }
             }
 
             report?.items?.forEach { item ->
@@ -57,6 +57,7 @@ fun DiagnosticsCard(backendUrl: String) {
                         "${if (item.ok) "OK" else "PROBLEM"} • ${item.name}",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
+                        color = if (item.ok) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
                     )
                     Text(item.detail, style = MaterialTheme.typography.bodySmall)
                 }

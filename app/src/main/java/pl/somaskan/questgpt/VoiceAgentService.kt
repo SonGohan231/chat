@@ -24,7 +24,6 @@ class VoiceAgentService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var client: RealtimeVoiceClient? = null
     private var retryJob: Job? = null
-    private var backendUrl: String = QuestEndpoints.PUBLIC_BACKEND
     private var pendingInitialPrompt: String? = null
     private var desiredRunning = false
 
@@ -41,13 +40,18 @@ class VoiceAgentService : Service() {
         }
 
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        backendUrl = intent?.getStringExtra(EXTRA_BACKEND_URL)
-            ?.takeIf { it.isNotBlank() }
-            ?: prefs.getString(KEY_BACKEND, QuestEndpoints.PUBLIC_BACKEND)
-            ?: QuestEndpoints.PUBLIC_BACKEND
         pendingInitialPrompt = intent?.getStringExtra(EXTRA_INITIAL_PROMPT)?.takeIf { it.isNotBlank() }
         desiredRunning = intent?.action == ACTION_START || prefs.getBoolean(KEY_DESIRED, false)
         if (!desiredRunning) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (!OpenAICredentialStore(this).hasKey()) {
+            VoiceAgentRuntime.desiredRunning = false
+            VoiceAgentRuntime.running = false
+            VoiceAgentRuntime.state = "Brak klucza OpenAI API"
+            VoiceAgentRuntime.lastError = "Wejdź w Ustawienia > OpenAI i zapisz klucz API."
+            setDesired(false)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -55,7 +59,7 @@ class VoiceAgentService : Service() {
         setDesired(true)
         startForeground(
             NOTIFICATION_ID,
-            buildNotification("Łączenie z OpenAI…"),
+            buildNotification("Łączenie bezpośrednio z OpenAI…"),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
         )
         connectNow()
@@ -65,11 +69,11 @@ class VoiceAgentService : Service() {
     private fun connectNow() {
         if (!desiredRunning) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            VoiceAgentRuntime.running = false
-            VoiceAgentRuntime.state = "Brak uprawnienia do mikrofonu"
-            VoiceAgentRuntime.lastError = "Zezwól QuestGPT na mikrofon, aby rozmowa mogła działać w tle."
-            broadcast(TYPE_ERROR, VoiceAgentRuntime.lastError.orEmpty())
-            stopSelf()
+            failPermanently("Brak uprawnienia do mikrofonu", "Zezwól QuestGPT na mikrofon w ustawieniach Questa.")
+            return
+        }
+        if (!OpenAICredentialStore(this).hasKey()) {
+            failPermanently("Brak klucza OpenAI API", "Wejdź w Ustawienia > OpenAI i zapisz klucz API.")
             return
         }
 
@@ -104,15 +108,37 @@ class VoiceAgentService : Service() {
             onError = { error ->
                 VoiceAgentRuntime.running = false
                 VoiceAgentRuntime.lastError = error
+                updateNotification("Błąd: ${error.take(90)}")
                 broadcast(TYPE_ERROR, error)
-                scheduleReconnect()
+                if (isPermanentError(error)) {
+                    setDesired(false)
+                    stopSelf()
+                } else {
+                    scheduleReconnect()
+                }
             },
             allowBackgroundHandoff = false,
         )
         client = newClient
-        VoiceAgentRuntime.state = "Łączenie z OpenAI…"
-        newClient.start(backendUrl, initialPrompt)
+        VoiceAgentRuntime.state = "Łączenie bezpośrednio z OpenAI…"
+        updateNotification(VoiceAgentRuntime.state)
+        newClient.start(initialPrompt)
     }
+
+    private fun failPermanently(state: String, error: String) {
+        VoiceAgentRuntime.running = false
+        VoiceAgentRuntime.state = state
+        VoiceAgentRuntime.lastError = error
+        broadcast(TYPE_ERROR, error)
+        setDesired(false)
+        stopSelf()
+    }
+
+    private fun isPermanentError(error: String): Boolean =
+        error.contains("Brak klucza", ignoreCase = true) ||
+            error.contains("401", ignoreCase = true) ||
+            error.contains("invalid", ignoreCase = true) && error.contains("key", ignoreCase = true) ||
+            error.contains("uprawnienia do mikrofonu", ignoreCase = true)
 
     private fun scheduleReconnect() {
         if (!desiredRunning || retryJob?.isActive == true) return
@@ -130,10 +156,7 @@ class VoiceAgentService : Service() {
     private fun setDesired(enabled: Boolean) {
         desiredRunning = enabled
         VoiceAgentRuntime.desiredRunning = enabled
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-            .putBoolean(KEY_DESIRED, enabled)
-            .putString(KEY_BACKEND, backendUrl)
-            .apply()
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_DESIRED, enabled).apply()
         if (!enabled) VoiceAgentRuntime.resetConversationDraft()
     }
 
@@ -145,7 +168,7 @@ class VoiceAgentService : Service() {
         VoiceAgentRuntime.running = false
         if (!desiredRunning) {
             VoiceAgentRuntime.desiredRunning = false
-            VoiceAgentRuntime.state = "Głos wyłączony"
+            if (VoiceAgentRuntime.lastError == null) VoiceAgentRuntime.state = "Głos wyłączony"
         }
         scope.cancel()
         super.onDestroy()
@@ -167,7 +190,7 @@ class VoiceAgentService : Service() {
 
     private fun buildNotification(text: String) = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-        .setContentTitle("QuestGPT Live działa w tle")
+        .setContentTitle("QuestGPT Live")
         .setContentText(text.take(120))
         .setOngoing(true)
         .setOnlyAlertOnce(true)
@@ -181,7 +204,7 @@ class VoiceAgentService : Service() {
         )
         .addAction(
             android.R.drawable.ic_media_pause,
-            "Zatrzymaj rozmowę",
+            "Zatrzymaj",
             PendingIntent.getService(
                 this,
                 32,
@@ -204,7 +227,6 @@ class VoiceAgentService : Service() {
         const val ACTION_START = "pl.somaskan.questgpt.VOICE_START"
         const val ACTION_STOP = "pl.somaskan.questgpt.VOICE_STOP"
         const val ACTION_EVENT = "pl.somaskan.questgpt.VOICE_EVENT"
-        const val EXTRA_BACKEND_URL = "backend_url"
         const val EXTRA_INITIAL_PROMPT = "initial_prompt"
         const val EXTRA_EVENT_TYPE = "event_type"
         const val EXTRA_EVENT_VALUE = "event_value"
@@ -214,7 +236,6 @@ class VoiceAgentService : Service() {
         const val TYPE_ERROR = "error"
         private const val PREFS = "questgpt_voice"
         private const val KEY_DESIRED = "desired_running"
-        private const val KEY_BACKEND = "backend_url"
         private const val CHANNEL_ID = "questgpt_voice"
         private const val NOTIFICATION_ID = 2402
     }

@@ -38,7 +38,7 @@ fun LiveEditScreen(
                 value = actions,
                 onValueChange = { actions = it },
                 label = { Text("Szybkie akcje — jedna na linię") },
-                modifier = Modifier.weight(1f).weight(1f, fill = true),
+                modifier = Modifier.weight(1f),
                 minLines = 4
             )
             OutlinedTextField(

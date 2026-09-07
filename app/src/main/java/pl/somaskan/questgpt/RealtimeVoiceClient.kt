@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
@@ -18,8 +17,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -46,15 +47,50 @@ class RealtimeVoiceClient(
             return
         }
 
-        val wsUrl = baseUrl.trimEnd('/')
-            .replaceFirst("https://", "wss://")
-            .replaceFirst("http://", "ws://") + "/api/realtime"
-
-        val request = Request.Builder().url(wsUrl).build()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        onState("Łączenie z OpenAI...")
+        scope?.launch {
+            runCatching { fetchRealtimeCredential(baseUrl) }
+                .onSuccess { credential -> connectDirect(credential) }
+                .onFailure {
+                    onError(it.message ?: "Nie udało się uzyskać tokenu Realtime")
+                    stop()
+                }
+        }
+    }
+
+    private data class RealtimeCredential(val token: String, val model: String)
+
+    private fun fetchRealtimeCredential(baseUrl: String): RealtimeCredential {
+        val backend = QuestEndpoints.resolveBackend(baseUrl)
+        val request = Request.Builder()
+            .url(backend + "/api/realtime-token")
+            .post("{}".toRequestBody("application/json".toMediaType()))
+            .build()
+        http.newCall(request).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val message = runCatching { JSONObject(raw).optString("error") }.getOrNull().orEmpty()
+                error(if (message.isNotBlank()) message else "Realtime backend ${response.code}: $raw")
+            }
+            val json = JSONObject(raw)
+            val token = json.optString("value")
+            val model = json.optString("model", "gpt-realtime")
+            check(token.isNotBlank()) { "Backend nie zwrócił krótkotrwałego tokenu Realtime" }
+            return RealtimeCredential(token, model)
+        }
+    }
+
+    private fun connectDirect(credential: RealtimeCredential) {
+        if (socket != null) return
+        val request = Request.Builder()
+            .url("wss://api.openai.com/v1/realtime?model=${credential.model}")
+            .header("Authorization", "Bearer ${credential.token}")
+            .build()
+
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                onState("Połączono — mów")
+                onState("Połączono z OpenAI — mów")
                 configureSession(webSocket)
                 startAudio(webSocket)
             }
@@ -134,7 +170,12 @@ class RealtimeVoiceClient(
 
         val minOut = AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         player = AudioTrack.Builder()
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
             .setAudioFormat(outputFormat)
             .setBufferSizeInBytes(maxOf(minOut, 8192))
             .setTransferMode(AudioTrack.MODE_STREAM)
@@ -147,7 +188,12 @@ class RealtimeVoiceClient(
                 val n = recorder?.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING) ?: -1
                 if (n > 0) {
                     val b64 = Base64.encodeToString(buffer.copyOf(n), Base64.NO_WRAP)
-                    webSocket.send(JSONObject().put("type", "input_audio_buffer.append").put("audio", b64).toString())
+                    webSocket.send(
+                        JSONObject()
+                            .put("type", "input_audio_buffer.append")
+                            .put("audio", b64)
+                            .toString()
+                    )
                 }
             }
         }

@@ -111,6 +111,67 @@ class WirelessAdbController(context: Context) {
         }
     }
 
+    suspend fun currentActivity(): String = runCatching {
+        runCommand("dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' | head -n 2")
+    }.getOrElse { "Nie udało się odczytać aktywnego okna: ${it.message}" }
+
+    suspend fun displaySize(): String = runCatching {
+        runCommand("wm size | head -n 2")
+    }.getOrElse { "Rozmiar ekranu nieznany" }
+
+    suspend fun uiHierarchyXml(): String = runCatching {
+        runCommand(
+            "uiautomator dump /sdcard/questgpt-window.xml >/dev/null 2>&1; " +
+                "cat /sdcard/questgpt-window.xml; rm -f /sdcard/questgpt-window.xml"
+        )
+    }.getOrElse { "" }
+
+    suspend fun tap(x: Int, y: Int): String {
+        require(x in 0..10000 && y in 0..10000) { "Współrzędne tap poza zakresem." }
+        runCommand("input tap $x $y")
+        return "tap($x,$y) wykonany"
+    }
+
+    suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int): String {
+        require(x1 in 0..10000 && y1 in 0..10000 && x2 in 0..10000 && y2 in 0..10000) {
+            "Współrzędne swipe poza zakresem."
+        }
+        val duration = durationMs.coerceIn(80, 2_500)
+        runCommand("input swipe $x1 $y1 $x2 $y2 $duration")
+        return "swipe($x1,$y1 -> $x2,$y2, ${duration}ms) wykonany"
+    }
+
+    suspend fun inputText(text: String): String {
+        val clean = text.take(500)
+        require(clean.isNotBlank()) { "Tekst jest pusty." }
+        val escaped = clean.replace("'", "'\\''")
+        runCommand("input text '$escaped'")
+        return "Wpisano tekst (${clean.length} znaków)"
+    }
+
+    suspend fun pressKey(key: String): String {
+        val normalized = key.uppercase()
+        val keyCode = when (normalized) {
+            "BACK" -> "KEYCODE_BACK"
+            "HOME" -> "KEYCODE_HOME"
+            "ENTER" -> "KEYCODE_ENTER"
+            "DPAD_UP" -> "KEYCODE_DPAD_UP"
+            "DPAD_DOWN" -> "KEYCODE_DPAD_DOWN"
+            "DPAD_LEFT" -> "KEYCODE_DPAD_LEFT"
+            "DPAD_RIGHT" -> "KEYCODE_DPAD_RIGHT"
+            "TAB" -> "KEYCODE_TAB"
+            else -> error("Niedozwolony klawisz: $key")
+        }
+        runCommand("input keyevent $keyCode")
+        return "Klawisz $normalized wykonany"
+    }
+
+    suspend fun openPackage(packageName: String): String {
+        require(packageName.matches(Regex("[A-Za-z0-9_.]{3,160}"))) { "Nieprawidłowa nazwa pakietu." }
+        val result = runCommand("monkey -p $packageName -c android.intent.category.LAUNCHER 1")
+        return "Uruchomienie $packageName: ${result.take(500)}"
+    }
+
     suspend fun captureScreenshotPng(autoConnectIfNeeded: Boolean = true): ByteArray = withContext(Dispatchers.IO) {
         val mgr = manager()
         if (!mgr.isConnected && autoConnectIfNeeded) {

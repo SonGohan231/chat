@@ -51,7 +51,7 @@ fun LiveEditScreen(
         }
         OutlinedTextField(
             value = refresh,
-            onValueChange = { refresh = it.filter(Char::isDigit) },
+            onValueChange = { value -> refresh = value.filter { it.isDigit() } },
             label = { Text("Odświeżanie zdalne (sekundy)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
@@ -64,8 +64,8 @@ fun LiveEditScreen(
                         LiveConfig(
                             title = title.trim().ifEmpty { "QuestGPT" },
                             subtitle = subtitle.trim(),
-                            quickActions = actions.lines().map(String::trim).filter(String::isNotEmpty),
-                            boardTemplates = templates.lines().map(String::trim).filter(String::isNotEmpty),
+                            quickActions = actions.lines().map { it.trim() }.filter { it.isNotEmpty() },
+                            boardTemplates = templates.lines().map { it.trim() }.filter { it.isNotEmpty() },
                             refreshSeconds = refresh.toLongOrNull()?.coerceIn(5, 3600) ?: 15,
                             updatedAt = "lokalna edycja w APK"
                         )

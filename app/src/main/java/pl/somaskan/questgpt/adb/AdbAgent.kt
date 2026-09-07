@@ -42,8 +42,20 @@ object AdbAgent {
 
     suspend fun execute(call: AgentToolCall): String {
         check(QuestAgentRuntime.agentControlEnabled) { "Sterowanie GPT jest wyłączone przez użytkownika." }
+        check(AgentAccessPolicy.canExecute(call.name)) {
+            "Narzędzie ${call.name} wymaga poziomu ${AgentAccessPolicy.minimumLevel(call.name).label}."
+        }
         val controller = WirelessAdbController(QuestApp.appContext)
         check(controller.isConnected()) { "ADB rozłączone podczas wykonywania akcji." }
+
+        if (AgentAccessPolicy.requiresConfirmation(call.name)) {
+            val approved = AgentConfirmationCenter.request(
+                title = confirmationTitle(call),
+                details = confirmationDetails(call),
+            )
+            check(approved) { "Użytkownik nie zatwierdził akcji ${call.name}." }
+        }
+
         QuestAgentRuntime.actionsThisTurn += 1
         QuestAgentRuntime.lastAction = "GPT: ${describe(call)}"
         QuestAgentRuntime.lastError = null
@@ -61,6 +73,18 @@ object AdbAgent {
                 "type_text" -> controller.inputText(call.arguments.getString("text"))
                 "press_key" -> controller.pressKey(call.arguments.getString("key"))
                 "open_app" -> controller.openPackage(call.arguments.getString("package_name"))
+                "open_url" -> controller.openUrl(call.arguments.getString("url"))
+                "launch_settings" -> controller.launchSettings(call.arguments.getString("section"))
+                "media_control" -> controller.mediaControl(call.arguments.getString("action"))
+                "volume_adjust" -> controller.adjustVolume(
+                    call.arguments.getString("direction"),
+                    call.arguments.optInt("steps", 1),
+                )
+                "set_brightness" -> controller.setBrightness(call.arguments.getInt("percent"))
+                "toggle_wifi" -> controller.toggleWifi(call.arguments.getBoolean("enabled"))
+                "toggle_bluetooth" -> controller.toggleBluetooth(call.arguments.getBoolean("enabled"))
+                "install_apk" -> controller.installApk(call.arguments.getString("path"))
+                "uninstall_app" -> controller.uninstallPackage(call.arguments.getString("package_name"))
                 "wait" -> {
                     val ms = call.arguments.optInt("milliseconds", 800).coerceIn(100, 5_000)
                     delay(ms.toLong())
@@ -78,16 +102,20 @@ object AdbAgent {
         }.getOrThrow()
     }
 
-    fun realtimeTools(): JSONArray = JSONArray().apply {
-        put(tool(
+    fun realtimeTools(): JSONArray {
+        if (!QuestAgentRuntime.agentControlEnabled) return JSONArray()
+        val tools = JSONArray()
+        fun add(name: String, value: JSONObject) {
+            if (AgentAccessPolicy.canExecute(name)) tools.put(value)
+        }
+
+        add("tap", tool(
             name = "tap",
             description = "Dotknij elementu interfejsu na ekranie Questa. Używaj współrzędnych z obrazu i bounds z drzewa UI.",
-            properties = JSONObject()
-                .put("x", integerProperty("Współrzędna X"))
-                .put("y", integerProperty("Współrzędna Y")),
+            properties = JSONObject().put("x", integerProperty("Współrzędna X")).put("y", integerProperty("Współrzędna Y")),
             required = listOf("x", "y"),
         ))
-        put(tool(
+        add("swipe", tool(
             name = "swipe",
             description = "Wykonaj gest przesunięcia na ekranie Questa.",
             properties = JSONObject()
@@ -98,41 +126,91 @@ object AdbAgent {
                 .put("duration_ms", integerProperty("Czas gestu w ms, zwykle 200-800")),
             required = listOf("x1", "y1", "x2", "y2"),
         ))
-        put(tool(
+        add("type_text", tool(
             name = "type_text",
             description = "Wpisz tekst do aktualnie aktywnego pola tekstowego.",
             properties = JSONObject().put("text", stringProperty("Tekst do wpisania")),
             required = listOf("text"),
         ))
-        put(tool(
+        add("press_key", tool(
             name = "press_key",
             description = "Naciśnij bezpieczny klawisz systemowy lub nawigacyjny.",
-            properties = JSONObject().put(
-                "key",
-                JSONObject()
-                    .put("type", "string")
-                    .put("enum", JSONArray(listOf("BACK", "HOME", "ENTER", "TAB", "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT")))
-            ),
+            properties = JSONObject().put("key", enumProperty(listOf("BACK", "HOME", "ENTER", "TAB", "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT"))),
             required = listOf("key"),
         ))
-        put(tool(
+        add("open_app", tool(
             name = "open_app",
             description = "Uruchom zainstalowaną aplikację, jeśli znasz jej package name.",
             properties = JSONObject().put("package_name", stringProperty("Android package name, np. com.oculus.browser")),
             required = listOf("package_name"),
         ))
-        put(tool(
+        add("open_url", tool(
+            name = "open_url",
+            description = "Otwórz bezpieczny adres http/https w domyślnej przeglądarce Questa.",
+            properties = JSONObject().put("url", stringProperty("Pełny adres http lub https")),
+            required = listOf("url"),
+        ))
+        add("launch_settings", tool(
+            name = "launch_settings",
+            description = "Otwórz konkretną sekcję ustawień systemowych bez zmieniania jej wartości.",
+            properties = JSONObject().put("section", enumProperty(listOf("WIFI", "BLUETOOTH", "DISPLAY", "SOUND", "APPS", "DEVELOPER", "ACCESSIBILITY", "NETWORK"))),
+            required = listOf("section"),
+        ))
+        add("media_control", tool(
+            name = "media_control",
+            description = "Steruj aktualnie odtwarzanymi multimediami.",
+            properties = JSONObject().put("action", enumProperty(listOf("PLAY_PAUSE", "NEXT", "PREVIOUS", "STOP"))),
+            required = listOf("action"),
+        ))
+        add("volume_adjust", tool(
+            name = "volume_adjust",
+            description = "Zmień głośność systemową o kilka kroków albo przełącz wyciszenie.",
+            properties = JSONObject().put("direction", enumProperty(listOf("UP", "DOWN", "MUTE"))).put("steps", integerProperty("1-10 kroków")),
+            required = listOf("direction"),
+        ))
+        add("set_brightness", tool(
+            name = "set_brightness",
+            description = "Ustaw przybliżoną jasność wyświetlacza Questa w procentach.",
+            properties = JSONObject().put("percent", integerProperty("5-100")),
+            required = listOf("percent"),
+        ))
+        add("toggle_wifi", tool(
+            name = "toggle_wifi",
+            description = "Włącz lub wyłącz Wi-Fi. Ta akcja zawsze wymaga potwierdzenia użytkownika w panelu QuestGPT.",
+            properties = JSONObject().put("enabled", booleanProperty("true = włącz, false = wyłącz")),
+            required = listOf("enabled"),
+        ))
+        add("toggle_bluetooth", tool(
+            name = "toggle_bluetooth",
+            description = "Włącz lub wyłącz Bluetooth. Ta akcja zawsze wymaga potwierdzenia użytkownika w panelu QuestGPT.",
+            properties = JSONObject().put("enabled", booleanProperty("true = włącz, false = wyłącz")),
+            required = listOf("enabled"),
+        ))
+        add("install_apk", tool(
+            name = "install_apk",
+            description = "Zainstaluj APK znajdujące się wyłącznie w folderze Download. Zawsze wymaga potwierdzenia użytkownika.",
+            properties = JSONObject().put("path", stringProperty("Ścieżka /sdcard/Download/nazwa.apk")),
+            required = listOf("path"),
+        ))
+        add("uninstall_app", tool(
+            name = "uninstall_app",
+            description = "Usuń aplikację użytkownika po package name. Zawsze wymaga potwierdzenia użytkownika.",
+            properties = JSONObject().put("package_name", stringProperty("Android package name")),
+            required = listOf("package_name"),
+        ))
+        add("wait", tool(
             name = "wait",
             description = "Poczekaj krótko aż interfejs się przeładuje.",
             properties = JSONObject().put("milliseconds", integerProperty("100-5000 ms")),
             required = emptyList(),
         ))
-        put(tool(
+        add("refresh_view", tool(
             name = "refresh_view",
-            description = "Poproś QuestGPT o natychmiastowe pobranie nowej klatki bez wykonywania akcji.",
+            description = "Natychmiast pobierz nową klatkę bez wykonywania akcji.",
             properties = JSONObject(),
             required = emptyList(),
         ))
+        return tools
     }
 
     private fun summarizeUi(xml: String, maxNodes: Int = 140): String {
@@ -168,26 +246,33 @@ object AdbAgent {
         return if (lines.isEmpty()) "Drzewo UI nie zawiera opisanych/interaktywnych elementów." else lines.joinToString("\n")
     }
 
-    private fun tool(
-        name: String,
-        description: String,
-        properties: JSONObject,
-        required: List<String>,
-    ): JSONObject = JSONObject()
-        .put("type", "function")
-        .put("name", name)
-        .put("description", description)
-        .put(
-            "parameters",
-            JSONObject()
-                .put("type", "object")
-                .put("properties", properties)
-                .put("required", JSONArray(required))
-                .put("additionalProperties", false)
-        )
+    private fun tool(name: String, description: String, properties: JSONObject, required: List<String>): JSONObject =
+        JSONObject()
+            .put("type", "function")
+            .put("name", name)
+            .put("description", description)
+            .put("parameters", JSONObject().put("type", "object").put("properties", properties).put("required", JSONArray(required)).put("additionalProperties", false))
 
     private fun integerProperty(description: String) = JSONObject().put("type", "integer").put("description", description)
     private fun stringProperty(description: String) = JSONObject().put("type", "string").put("description", description)
+    private fun booleanProperty(description: String) = JSONObject().put("type", "boolean").put("description", description)
+    private fun enumProperty(values: List<String>) = JSONObject().put("type", "string").put("enum", JSONArray(values))
+
+    private fun confirmationTitle(call: AgentToolCall): String = when (call.name) {
+        "toggle_wifi" -> "Zmiana Wi-Fi"
+        "toggle_bluetooth" -> "Zmiana Bluetooth"
+        "install_apk" -> "Instalacja APK"
+        "uninstall_app" -> "Usunięcie aplikacji"
+        else -> "Wrażliwa akcja systemowa"
+    }
+
+    private fun confirmationDetails(call: AgentToolCall): String = when (call.name) {
+        "toggle_wifi" -> "GPT chce ${if (call.arguments.optBoolean("enabled")) "włączyć" else "wyłączyć"} Wi-Fi."
+        "toggle_bluetooth" -> "GPT chce ${if (call.arguments.optBoolean("enabled")) "włączyć" else "wyłączyć"} Bluetooth."
+        "install_apk" -> "GPT chce zainstalować: ${call.arguments.optString("path").take(300)}"
+        "uninstall_app" -> "GPT chce usunąć aplikację: ${call.arguments.optString("package_name").take(180)}"
+        else -> describe(call)
+    }
 
     private fun describe(call: AgentToolCall): String = when (call.name) {
         "tap" -> "tap ${call.arguments.optInt("x")},${call.arguments.optInt("y")}"
@@ -195,6 +280,15 @@ object AdbAgent {
         "type_text" -> "wpisuję tekst"
         "press_key" -> "klawisz ${call.arguments.optString("key")}"
         "open_app" -> "otwieram ${call.arguments.optString("package_name")}"
+        "open_url" -> "otwieram URL"
+        "launch_settings" -> "ustawienia ${call.arguments.optString("section")}"
+        "media_control" -> "multimedia ${call.arguments.optString("action")}"
+        "volume_adjust" -> "głośność ${call.arguments.optString("direction")}"
+        "set_brightness" -> "jasność ${call.arguments.optInt("percent")}%"
+        "toggle_wifi" -> "Wi-Fi ${call.arguments.optBoolean("enabled")}"
+        "toggle_bluetooth" -> "Bluetooth ${call.arguments.optBoolean("enabled")}"
+        "install_apk" -> "instaluję APK"
+        "uninstall_app" -> "usuwam ${call.arguments.optString("package_name")}"
         "wait" -> "czekam"
         "refresh_view" -> "odświeżam widok"
         else -> call.name

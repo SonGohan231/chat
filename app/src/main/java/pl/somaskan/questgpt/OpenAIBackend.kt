@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import pl.somaskan.questgpt.adb.AdbVisionCapture
 
 class OpenAIBackend(private val http: OkHttpClient = OkHttpClient()) {
     data class Reply(val text: String, val responseId: String?)
@@ -18,9 +19,20 @@ class OpenAIBackend(private val http: OkHttpClient = OkHttpClient()) {
         previousResponseId: String?
     ): Reply = withContext(Dispatchers.IO) {
         val backend = QuestEndpoints.resolveBackend(baseUrl)
+
+        // If Wireless ADB is already connected, every normal Chat turn gets a fresh
+        // screenshot of the current Quest display. Explicit images still take priority.
+        val adbView = if (imageDataUrl == null) {
+            AdbVisionCapture.captureDataUrlIfAvailable(autoConnectIfNeeded = false)
+        } else null
+        val effectiveImage = imageDataUrl ?: adbView
+        val effectiveText = if (adbView != null) {
+            "$text\n\nDołączony obraz jest aktualnym widokiem ekranu użytkownika na Meta Quest 3, pobranym przez ADB. Uwzględnij go przy odpowiedzi."
+        } else text
+
         val body = JSONObject().apply {
-            put("text", text)
-            if (imageDataUrl != null) put("imageDataUrl", imageDataUrl)
+            put("text", effectiveText)
+            if (effectiveImage != null) put("imageDataUrl", effectiveImage)
             if (previousResponseId != null) put("previousResponseId", previousResponseId)
         }
         val request = Request.Builder()

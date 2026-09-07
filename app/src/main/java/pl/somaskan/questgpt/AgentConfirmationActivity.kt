@@ -2,6 +2,7 @@ package pl.somaskan.questgpt
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -15,6 +16,10 @@ import pl.somaskan.questgpt.adb.AgentConfirmationCenter
 class AgentConfirmationActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this) {
+            AgentConfirmationCenter.deny()
+            finish()
+        }
         setContent {
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) {
@@ -22,11 +27,6 @@ class AgentConfirmationActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    override fun onBackPressed() {
-        AgentConfirmationCenter.deny()
-        finish()
     }
 
     @Composable

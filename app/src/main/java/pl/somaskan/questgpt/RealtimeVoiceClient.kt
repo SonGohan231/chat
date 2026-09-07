@@ -37,7 +37,8 @@ class RealtimeVoiceClient(
     private val onAssistantDelta: (String) -> Unit,
     private val onUserTranscript: (String) -> Unit,
     private val onState: (String) -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (String) -> Unit,
+    private val allowBackgroundHandoff: Boolean = true,
 ) {
     private val http = OkHttpClient()
     private var socket: WebSocket? = null
@@ -49,11 +50,19 @@ class RealtimeVoiceClient(
     @Volatile private var lastVisionSentAt = 0L
     @Volatile private var lastVisionHash: String? = null
     @Volatile private var startupPrompt: String? = null
+    @Volatile private var lastBaseUrl: String? = null
 
     fun start(baseUrl: String, initialPrompt: String? = null) {
         if (socket != null) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             onError("Brak uprawnienia do mikrofonu")
+            return
+        }
+
+        lastBaseUrl = baseUrl
+        if (allowBackgroundHandoff) {
+            onState("Uruchamianie GPT Live w tle...")
+            VoiceAgentController.start(context.applicationContext, baseUrl, initialPrompt)
             return
         }
 
@@ -353,6 +362,10 @@ class RealtimeVoiceClient(
     }
 
     fun stop() {
+        val wasActive = socket != null || recorder != null || recordJob?.isActive == true
+        val handoffBaseUrl = lastBaseUrl
+        val shouldHandoff = allowBackgroundHandoff && wasActive && !handoffBaseUrl.isNullOrBlank() && QuestApp.shouldHandoffVoiceToService()
+
         recordJob?.cancel()
         recordJob = null
         visionJob?.cancel()
@@ -371,5 +384,9 @@ class RealtimeVoiceClient(
         lastVisionHash = null
         startupPrompt = null
         onState("Głos wyłączony")
+
+        if (shouldHandoff) {
+            runCatching { VoiceAgentController.start(context.applicationContext, handoffBaseUrl!!) }
+        }
     }
 }

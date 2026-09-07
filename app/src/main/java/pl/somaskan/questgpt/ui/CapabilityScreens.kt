@@ -6,12 +6,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import pl.somaskan.questgpt.QuestEndpoints
+import pl.somaskan.questgpt.VoiceAgentController
+import pl.somaskan.questgpt.VoiceAgentRuntime
 
 @Composable
 fun VoiceScreen(state: String, onToggle: () -> Unit) {
+    val context = LocalContext.current
+    val backgroundActive = VoiceAgentRuntime.desiredRunning
+    val effectiveState = if (backgroundActive) VoiceAgentRuntime.state else state
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -19,16 +26,40 @@ fun VoiceScreen(state: String, onToggle: () -> Unit) {
         Text("Rozmowa głosowa", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         ElevatedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(state, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(effectiveState, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Dwukierunkowe audio OpenAI Realtime. W trybie ADB Vision GPT dostaje aktualny widok Questa i może używać bezpiecznych narzędzi tap/swipe/tekst podczas rozmowy.",
+                    "OpenAI Realtime może zostać przejęte przez osobną usługę mikrofonu po zamknięciu panelu QuestGPT. W tle usługa automatycznie ponawia połączenie po utracie sieci, a ADB Vision nadal dostarcza aktualny widok i narzędzia agenta.",
                     style = MaterialTheme.typography.bodyLarge
                 )
+                if (VoiceAgentRuntime.reconnectAttempt > 0 && backgroundActive) {
+                    Text("Próba ponownego połączenia: ${VoiceAgentRuntime.reconnectAttempt}", style = MaterialTheme.typography.bodyMedium)
+                }
+                VoiceAgentRuntime.lastError?.takeIf { backgroundActive }?.let {
+                    Text("Błąd: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                }
             }
         }
+
+        if (backgroundActive && (VoiceAgentRuntime.lastUserTranscript.isNotBlank() || VoiceAgentRuntime.assistantTranscript.isNotBlank())) {
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Ostatnia rozmowa w tle", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    VoiceAgentRuntime.lastUserTranscript.takeIf { it.isNotBlank() }?.let { Text("Ty: $it") }
+                    VoiceAgentRuntime.assistantTranscript.takeIf { it.isNotBlank() }?.let { Text("GPT: $it") }
+                }
+            }
+        }
+
         AdbVisionStatusCard(compact = false)
-        Button(onClick = onToggle, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)) {
-            Text(if (state.startsWith("Połączono")) "Zatrzymaj rozmowę" else "Uruchom GPT Live")
+        Button(
+            onClick = { if (backgroundActive) VoiceAgentController.stop(context) else onToggle() },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
+        ) {
+            Text(
+                if (backgroundActive || effectiveState.startsWith("Połączono") || effectiveState.startsWith("Ponowne łączenie") || effectiveState.startsWith("Łączenie"))
+                    "Zatrzymaj rozmowę"
+                else "Uruchom GPT Live"
+            )
         }
         Spacer(Modifier.height(18.dp))
     }
@@ -143,6 +174,7 @@ fun SettingsScreen(
             ) {
                 AdbVisionStatusCard(compact = false)
                 WirelessAdbScreen(embedded = true)
+                DiagnosticsCard(backendUrl)
                 Spacer(Modifier.height(18.dp))
             }
         } else {
@@ -176,6 +208,7 @@ fun SettingsScreen(
                 PermissionRow("Mikrofon", micGranted, onMicPermission)
                 PermissionRow("Powiadomienia", notificationsGranted, onNotificationPermission)
                 PermissionRow("Instalowanie aktualizacji APK", installGranted, onInstallPermission)
+                DiagnosticsCard(backendUrl)
 
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Text(

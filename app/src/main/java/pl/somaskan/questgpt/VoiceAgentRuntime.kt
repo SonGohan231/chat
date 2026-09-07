@@ -10,4 +10,11 @@ object VoiceAgentRuntime {
     var state by mutableStateOf("Głos wyłączony")
     var lastError by mutableStateOf<String?>(null)
     var reconnectAttempt by mutableStateOf(0)
+    var lastUserTranscript by mutableStateOf("")
+    var assistantTranscript by mutableStateOf("")
+
+    fun resetConversationDraft() {
+        lastUserTranscript = ""
+        assistantTranscript = ""
+    }
 }

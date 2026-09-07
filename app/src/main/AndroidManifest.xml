@@ -36,6 +36,19 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".AgentConfirmationActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:resizeableActivity="true"
+            android:screenOrientation="unspecified">
+            <layout
+                android:defaultWidth="760dp"
+                android:defaultHeight="420dp"
+                android:minWidth="520dp"
+                android:minHeight="320dp" />
+        </activity>
+
         <service
             android:name=".CaptureService"
             android:exported="false"

@@ -60,6 +60,12 @@ class RealtimeVoiceClient(
         }
 
         lastBaseUrl = baseUrl
+        if (allowBackgroundHandoff) {
+            onState("Uruchamianie GPT Live w tle...")
+            VoiceAgentController.start(context.applicationContext, baseUrl, initialPrompt)
+            return
+        }
+
         startupPrompt = initialPrompt?.takeIf { it.isNotBlank() }
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         onState("Łączenie z OpenAI...")

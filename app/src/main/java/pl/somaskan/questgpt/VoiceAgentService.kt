@@ -77,13 +77,19 @@ class VoiceAgentService : Service() {
         client?.stop()
         val initialPrompt = pendingInitialPrompt
         pendingInitialPrompt = null
+        VoiceAgentRuntime.assistantTranscript = ""
         val newClient = RealtimeVoiceClient(
             applicationContext,
             onAssistantDelta = { delta ->
+                VoiceAgentRuntime.assistantTranscript += delta
                 broadcast(TYPE_ASSISTANT_DELTA, delta)
             },
             onUserTranscript = { text ->
-                if (text.isNotBlank()) broadcast(TYPE_USER_TRANSCRIPT, text)
+                if (text.isNotBlank()) {
+                    VoiceAgentRuntime.lastUserTranscript = text
+                    VoiceAgentRuntime.assistantTranscript = ""
+                    broadcast(TYPE_USER_TRANSCRIPT, text)
+                }
             },
             onState = { state ->
                 VoiceAgentRuntime.state = state
@@ -101,6 +107,7 @@ class VoiceAgentService : Service() {
                 broadcast(TYPE_ERROR, error)
                 scheduleReconnect()
             },
+            allowBackgroundHandoff = false,
         )
         client = newClient
         VoiceAgentRuntime.state = "Łączenie z OpenAI…"
@@ -127,6 +134,7 @@ class VoiceAgentService : Service() {
             .putBoolean(KEY_DESIRED, enabled)
             .putString(KEY_BACKEND, backendUrl)
             .apply()
+        if (!enabled) VoiceAgentRuntime.resetConversationDraft()
     }
 
     override fun onDestroy() {

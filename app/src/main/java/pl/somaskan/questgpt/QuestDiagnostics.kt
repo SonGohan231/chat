@@ -14,21 +14,24 @@ data class DiagnosticItem(val name: String, val ok: Boolean, val detail: String)
 data class DiagnosticReport(val items: List<DiagnosticItem>, val ranAt: Long = System.currentTimeMillis())
 
 object QuestDiagnostics {
-    suspend fun run(context: Context, backendUrl: String): DiagnosticReport = withContext(Dispatchers.IO) {
+    suspend fun run(context: Context): DiagnosticReport = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         val items = mutableListOf<DiagnosticItem>()
+        val store = OpenAICredentialStore(app)
+        val settings = store.settings()
 
-        // This is the exact credential path used by Chat and GPT Live. It deliberately
-        // does not treat a 200 HTML frontend shell as a healthy OpenAI backend.
-        val realtimeBridge = runCatching { RealtimeCredentialProvider.fetch(backendUrl, "voice") }
         items += DiagnosticItem(
-            "OpenAI Realtime / most",
-            realtimeBridge.isSuccess,
-            realtimeBridge.fold(
-                onSuccess = { "Gotowe • ${it.transport} • model=${it.model}" },
-                onFailure = { it.message ?: "Nie udało się pobrać krótkotrwałego tokenu Realtime" },
-            ),
+            "OpenAI API key",
+            settings.configured,
+            if (settings.configured) "Klucz jest zapisany lokalnie i chroniony przez Android Keystore." else "Brak klucza. Ustawienia > OpenAI > zapisz klucz API.",
         )
+        if (settings.configured) {
+            val tester = OpenAIConnectionTester(app)
+            val textTest = tester.testModel(settings.textModel)
+            items += DiagnosticItem("OpenAI tekst", textTest.ok, textTest.detail)
+            val realtimeTest = tester.testModel(settings.realtimeModel)
+            items += DiagnosticItem("OpenAI Realtime", realtimeTest.ok, realtimeTest.detail)
+        }
 
         val mic = ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         items += DiagnosticItem("Mikrofon", mic, if (mic) "Uprawnienie przyznane" else "Brak uprawnienia RECORD_AUDIO")
@@ -73,7 +76,7 @@ object QuestDiagnostics {
             VoiceAgentRuntime.running || !VoiceAgentRuntime.desiredRunning,
             when {
                 VoiceAgentRuntime.running -> "Połączony i działa w tle"
-                VoiceAgentRuntime.desiredRunning -> "Ma działać, ale nie jest połączony: ${VoiceAgentRuntime.state}"
+                VoiceAgentRuntime.desiredRunning -> "Ma działać, ale nie jest połączony: ${VoiceAgentRuntime.state}${VoiceAgentRuntime.lastError?.let { " • $it" }.orEmpty()}"
                 else -> "Wyłączony przez użytkownika"
             },
         )
@@ -113,14 +116,18 @@ object QuestDiagnostics {
         DiagnosticReport(items)
     }
 
-    suspend fun repair(context: Context, backendUrl: String): DiagnosticReport = withContext(Dispatchers.IO) {
+    suspend fun repair(context: Context): DiagnosticReport = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         AgentServiceController.startIfEnabled(app)
         AdbVisionMonitor.start()
         runCatching { WirelessAdbController(app).isUsable(10_000L) }
-        if (VoiceAgentRuntime.desiredRunning && ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            runCatching { VoiceAgentController.start(app, backendUrl) }
+        if (
+            VoiceAgentRuntime.desiredRunning &&
+            OpenAICredentialStore(app).hasKey() &&
+            ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { VoiceAgentController.start(app) }
         }
-        run(app, backendUrl)
+        run(app)
     }
 }

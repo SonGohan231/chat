@@ -11,6 +11,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import pl.somaskan.questgpt.adb.AdbAgent
 import pl.somaskan.questgpt.adb.AdbObservation
+import pl.somaskan.questgpt.adb.AgentAccessPolicy
+import pl.somaskan.questgpt.adb.AgentPermissionLevel
 import pl.somaskan.questgpt.adb.AgentToolCall
 import pl.somaskan.questgpt.adb.QuestAgentRuntime
 import pl.somaskan.questgpt.adb.WirelessAdbController
@@ -43,6 +45,8 @@ class OpenAIBackend(private val http: OkHttpClient = OkHttpClient()) {
             QuestAgentRuntime.lastError = error.message
             return@withContext plainRespond(backend, text, null, previousResponseId)
         }
+        var permissionLevel = AgentAccessPolicy.current()
+        var actionsAllowed = QuestAgentRuntime.agentControlEnabled && permissionLevel != AgentPermissionLevel.OBSERVE
 
         var step = runCatching {
             postAgentStart(
@@ -50,7 +54,8 @@ class OpenAIBackend(private val http: OkHttpClient = OkHttpClient()) {
                 text = text,
                 previousResponseId = previousResponseId,
                 observation = firstObservation,
-                allowActions = QuestAgentRuntime.agentControlEnabled,
+                allowActions = actionsAllowed,
+                permissionLevel = permissionLevel.key,
             )
         }.getOrElse { error ->
             QuestAgentRuntime.lastError = "Agent backend: ${error.message}"
@@ -78,12 +83,15 @@ class OpenAIBackend(private val http: OkHttpClient = OkHttpClient()) {
 
             delay(350L)
             val observation = runCatching { AdbAgent.observe() }.getOrNull()
+            permissionLevel = AgentAccessPolicy.current()
+            actionsAllowed = QuestAgentRuntime.agentControlEnabled && permissionLevel != AgentPermissionLevel.OBSERVE
             step = postAgentContinue(
                 backend = backend,
                 previousResponseId = step.responseId ?: error("Agent nie zwrócił responseId."),
                 outputs = outputs,
                 observation = observation,
-                allowActions = QuestAgentRuntime.agentControlEnabled,
+                allowActions = actionsAllowed,
+                permissionLevel = permissionLevel.key,
             )
         }
 
@@ -119,10 +127,12 @@ class OpenAIBackend(private val http: OkHttpClient = OkHttpClient()) {
         previousResponseId: String?,
         observation: AdbObservation,
         allowActions: Boolean,
+        permissionLevel: String,
     ): AgentStep {
         val body = JSONObject()
             .put("text", text)
             .put("allowActions", allowActions)
+            .put("permissionLevel", permissionLevel)
             .put("observation", observationJson(observation))
         if (previousResponseId != null) body.put("previousResponseId", previousResponseId)
         return parseAgentStep(postJson(backend + "/api/agent/start", body))
@@ -134,10 +144,12 @@ class OpenAIBackend(private val http: OkHttpClient = OkHttpClient()) {
         outputs: JSONArray,
         observation: AdbObservation?,
         allowActions: Boolean,
+        permissionLevel: String,
     ): AgentStep {
         val body = JSONObject()
             .put("previousResponseId", previousResponseId)
             .put("allowActions", allowActions)
+            .put("permissionLevel", permissionLevel)
             .put("toolOutputs", outputs)
         if (observation != null) body.put("observation", observationJson(observation))
         return parseAgentStep(postJson(backend + "/api/agent/continue", body))

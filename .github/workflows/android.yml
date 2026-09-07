@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main, questgpt-live-edit-v3, questgpt-wireless-adb-v1, questgpt-agent-v22, questgpt-agent-service-v24, questgpt-startup-guide-v29, questgpt-persistent-voice-diagnostics-v31]
+    branches: [main, questgpt-live-edit-v3, questgpt-wireless-adb-v1, questgpt-agent-v22, questgpt-agent-service-v24, questgpt-startup-guide-v29, questgpt-persistent-voice-diagnostics-v31, questgpt-world-vision-v34]
   workflow_dispatch:
 
 permissions:

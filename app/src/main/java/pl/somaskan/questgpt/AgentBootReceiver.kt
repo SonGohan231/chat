@@ -1,0 +1,13 @@
+package pl.somaskan.questgpt
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+
+class AgentBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action == Intent.ACTION_BOOT_COMPLETED || intent?.action == Intent.ACTION_LOCKED_BOOT_COMPLETED) {
+            AgentServiceController.startIfEnabled(context.applicationContext)
+        }
+    }
+}

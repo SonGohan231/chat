@@ -7,14 +7,14 @@ const apiKey = process.env.OPENAI_API_KEY;
 if (!apiKey) throw new Error("OPENAI_API_KEY is required");
 
 const port = Number(process.env.PORT || 8787);
-const textModel = process.env.OPENAI_TEXT_MODEL || "gpt-5";
+const textModel = process.env.OPENAI_TEXT_MODEL || "gpt-5.6";
 const realtimeModel = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1";
 const openai = new OpenAI({ apiKey });
 
 const app = express();
 app.use(express.json({ limit: "25mb" }));
 
-app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/health", (_req, res) => res.json({ ok: true, textModel, realtimeModel }));
 
 app.post("/api/respond", async (req, res) => {
   try {

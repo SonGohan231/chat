@@ -65,6 +65,7 @@ object StartupConversationGuide {
         val level = AgentAccessPolicy.current().label
         val worldPermission = PassthroughCameraCapture(context).hasPermission()
         val worldEnabled = WorldVisionManager.isEnabled(context)
+        val openAI = OpenAICredentialStore(context).settings()
         val mode = if (fullGuide) {
             "To jest pierwsze uruchomienie przewodnika. Zacznij rozmowę samodzielnie i przeprowadź użytkownika przez konfigurację krok po kroku."
         } else {
@@ -77,6 +78,7 @@ object StartupConversationGuide {
             Jesteś QuestGPT działającym natywnie na Meta Quest 3. Mów po polsku, naturalnie, krótko i praktycznie. Nie czekaj, aż użytkownik odezwie się pierwszy. W tej wypowiedzi startowej niczego nie klikaj ani nie zmieniaj — tylko przedstaw stan, możliwości i następny krok.
 
             Stan bieżący:
+            - OpenAI API: ${if (openAI.configured) "skonfigurowane bezpośrednio" else "brak klucza"}; tekst=${openAI.textModel}; głos=${openAI.realtimeModel}
             - mikrofon: ${if (micGranted) "gotowy" else "brak uprawnienia"}
             - Wireless ADB: ${if (adbConnected) "połączone" else "niepołączone"}
             - Agent Service: ${if (serviceEnabled) "włączony" else "wyłączony"}
@@ -86,10 +88,9 @@ object StartupConversationGuide {
             - poziom uprawnień agenta: $level
             - powiadomienia: ${if (notificationsGranted) "gotowe" else "brak uprawnienia"}
             - instalowanie aktualizacji APK: ${if (installGranted) "dozwolone" else "brak uprawnienia"}
-            - backend OpenAI: ${QuestEndpoints.PUBLIC_BACKEND}
 
             Możliwości, które masz wyjaśnić w razie pierwszego przewodnika:
-            1. rozmowa tekstowa i głosowa przez OpenAI Realtime;
+            1. rozmowa tekstowa przez OpenAI Responses API i głosowa przez OpenAI Realtime;
             2. analiza zdjęć i ręcznych screenshotów;
             3. ADB Vision: aktualny obraz ekranu + UIAutomator, dzięki czemu możesz rozumieć elementy interfejsu;
             4. World Vision: na Quest 3/3S możesz dostać świeżą klatkę z przedniej kamery passthrough i rozumieć fizyczne przedmioty/otoczenie użytkownika po jego zgodzie;

@@ -37,28 +37,15 @@ class WirelessAdbController(context: Context) {
     fun savedConnectPort(): String = prefs.getInt("connect_port", -1).takeIf { it > 0 }?.toString().orEmpty()
 
     suspend fun discoverPairingEndpoint(timeoutMs: Long = 12_000L): AdbEndpoint = withContext(Dispatchers.IO) {
-        val host = AtomicReference<String?>(null)
-        val port = AtomicInteger(-1)
-        val latch = CountDownLatch(1)
-        val mdns = AdbMdns(appContext, AdbMdns.SERVICE_TYPE_TLS_PAIRING) { address, discoveredPort ->
-            if (address != null && discoveredPort > 0) {
-                host.set(address.hostAddress)
-                port.set(discoveredPort)
-            }
-            latch.countDown()
+        discoverEndpointBlocking(AdbMdns.SERVICE_TYPE_TLS_PAIRING, timeoutMs).also {
+            saveEndpoint(it.host, pairPort = it.port)
         }
-        mdns.start()
-        try {
-            if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
-                error("Nie znaleziono portu parowania. Zostaw otwarte okno „Paruj urządzenie kodem” w ustawieniach Questa.")
-            }
-        } finally {
-            mdns.stop()
+    }
+
+    suspend fun discoverConnectEndpoint(timeoutMs: Long = 8_000L): AdbEndpoint = withContext(Dispatchers.IO) {
+        discoverEndpointBlocking(AdbMdns.SERVICE_TYPE_TLS_CONNECT, timeoutMs).also {
+            saveEndpoint(it.host, connectPort = it.port)
         }
-        val result = AdbEndpoint(host.get() ?: localHostAddress(), port.get())
-        if (result.port <= 0) error("Nie udało się odczytać portu parowania ADB.")
-        saveEndpoint(result.host, pairPort = result.port)
-        result
     }
 
     suspend fun pair(host: String, port: Int, code: String): Boolean = withContext(Dispatchers.IO) {
@@ -66,49 +53,51 @@ class WirelessAdbController(context: Context) {
         require(port in 1..65535) { "Nieprawidłowy port parowania." }
         require(code.length == 6 && code.all(Char::isDigit)) { "Kod parowania musi mieć 6 cyfr." }
         val paired = manager().pair(host.trim(), port, code)
-        if (paired) saveEndpoint(host.trim(), pairPort = port)
+        if (paired) {
+            saveEndpoint(host.trim(), pairPort = port)
+            Thread.sleep(350L)
+            runCatching { ensureConnectedInternal(6_000L) }
+        }
         paired
     }
 
     suspend fun autoConnect(timeoutMs: Long = 10_000L): Boolean = withContext(Dispatchers.IO) {
-        val mgr = manager()
-        if (mgr.isConnected) return@withContext true
-        val connected = mgr.autoConnect(appContext, timeoutMs)
-        connected || mgr.isConnected
+        ensureConnectedInternal(timeoutMs)
+    }
+
+    suspend fun isUsable(timeoutMs: Long = 5_000L): Boolean = withContext(Dispatchers.IO) {
+        ensureConnectedInternal(timeoutMs)
     }
 
     suspend fun directConnect(host: String, port: Int): Boolean = withContext(Dispatchers.IO) {
         require(host.isNotBlank()) { "Podaj adres IP urządzenia." }
         require(port in 1..65535) { "Nieprawidłowy port połączenia ADB." }
         val mgr = manager()
-        if (mgr.isConnected) mgr.disconnect()
-        val connected = mgr.connect(host.trim(), port)
-        if (connected || mgr.isConnected) saveEndpoint(host.trim(), connectPort = port)
-        connected || mgr.isConnected
+        forceDisconnect(mgr)
+        val connected = runCatching { mgr.connect(host.trim(), port) }.getOrDefault(false)
+        val usable = (connected || mgr.isConnected) && probeConnection(mgr)
+        if (usable) saveEndpoint(host.trim(), connectPort = port) else forceDisconnect(mgr)
+        usable
     }
 
     suspend fun disconnect() = withContext(Dispatchers.IO) {
-        if (manager().isConnected) manager().disconnect()
+        forceDisconnect(manager())
     }
 
     suspend fun runCommand(command: String): String = withContext(Dispatchers.IO) {
         val clean = command.trim()
         require(clean.isNotEmpty()) { "Polecenie jest puste." }
-        check(manager().isConnected) { "Najpierw połącz ADB." }
+        check(ensureConnectedInternal(7_000L)) {
+            "ADB nie ma aktywnego kanału shell. Otwórz Debugowanie bezprzewodowe i użyj Auto Connect."
+        }
 
-        val stream = manager().openStream("shell:$clean")
-        try {
-            BufferedReader(InputStreamReader(stream.openInputStream())).use { reader ->
-                buildString {
-                    var line: String?
-                    while (true) {
-                        line = reader.readLine() ?: break
-                        append(line).append('\n')
-                    }
-                }.trimEnd().ifBlank { "(polecenie zakończone bez tekstowego wyniku)" }
+        val mgr = manager()
+        runCatching { rawRunCommand(mgr, clean) }.getOrElse { first ->
+            forceDisconnect(mgr)
+            check(ensureConnectedInternal(7_000L)) {
+                "ADB rozłączyło się (${first.message}). Nie udało się odnaleźć nowego portu połączenia."
             }
-        } finally {
-            runCatching { stream.close() }
+            rawRunCommand(mgr, clean)
         }
     }
 
@@ -256,11 +245,74 @@ class WirelessAdbController(context: Context) {
 
     suspend fun captureScreenshotPng(autoConnectIfNeeded: Boolean = true): ByteArray = withContext(Dispatchers.IO) {
         val mgr = manager()
-        if (!mgr.isConnected && autoConnectIfNeeded) {
-            runCatching { mgr.autoConnect(appContext, 4_000L) }
+        val timeout = if (autoConnectIfNeeded) 7_000L else 4_000L
+        check(ensureConnectedInternal(timeout)) {
+            "ADB nie ma aktywnego kanału screencap — włącz Debugowanie bezprzewodowe i użyj Auto Connect."
         }
-        check(mgr.isConnected) { "ADB nie jest połączone — najpierw użyj Auto Connect." }
 
+        runCatching { captureScreenshotOnce(mgr) }.getOrElse { first ->
+            forceDisconnect(mgr)
+            check(ensureConnectedInternal(7_000L)) {
+                "ADB rozłączyło się podczas screencap (${first.message}). Nie znaleziono nowego portu."
+            }
+            captureScreenshotOnce(mgr)
+        }
+    }
+
+    private fun ensureConnectedInternal(timeoutMs: Long): Boolean {
+        val mgr = manager()
+        if (mgr.isConnected && probeConnection(mgr)) return true
+        forceDisconnect(mgr)
+
+        val mdnsTimeout = timeoutMs.coerceIn(1_500L, 8_000L)
+        val discovered = runCatching {
+            discoverEndpointBlocking(AdbMdns.SERVICE_TYPE_TLS_CONNECT, mdnsTimeout)
+        }.getOrNull()
+        if (discovered != null) {
+            val connected = runCatching { mgr.connect(discovered.host, discovered.port) }.getOrDefault(false)
+            if ((connected || mgr.isConnected) && probeConnection(mgr)) {
+                saveEndpoint(discovered.host, connectPort = discovered.port)
+                return true
+            }
+            forceDisconnect(mgr)
+        }
+
+        val auto = runCatching { mgr.autoConnect(appContext, timeoutMs) }.getOrDefault(false)
+        if ((auto || mgr.isConnected) && probeConnection(mgr)) return true
+        forceDisconnect(mgr)
+
+        val savedPort = prefs.getInt("connect_port", -1)
+        val savedHost = savedHost()
+        if (savedPort in 1..65535) {
+            val connected = runCatching { mgr.connect(savedHost, savedPort) }.getOrDefault(false)
+            if ((connected || mgr.isConnected) && probeConnection(mgr)) return true
+            forceDisconnect(mgr)
+        }
+        return false
+    }
+
+    private fun probeConnection(mgr: AbsAdbConnectionManager): Boolean = runCatching {
+        rawRunCommand(mgr, "echo QUESTGPT_ADB_OK").contains("QUESTGPT_ADB_OK")
+    }.getOrDefault(false)
+
+    private fun rawRunCommand(mgr: AbsAdbConnectionManager, clean: String): String {
+        val stream = mgr.openStream("shell:$clean")
+        return try {
+            BufferedReader(InputStreamReader(stream.openInputStream())).use { reader ->
+                buildString {
+                    var line: String?
+                    while (true) {
+                        line = reader.readLine() ?: break
+                        append(line).append('\n')
+                    }
+                }.trimEnd().ifBlank { "(polecenie zakończone bez tekstowego wyniku)" }
+            }
+        } finally {
+            runCatching { stream.close() }
+        }
+    }
+
+    private fun captureScreenshotOnce(mgr: AbsAdbConnectionManager): ByteArray {
         val fromBase64 = runCatching {
             val stream = mgr.openStream("shell:screencap -p | base64")
             try {
@@ -271,20 +323,48 @@ class WirelessAdbController(context: Context) {
                 runCatching { stream.close() }
             }
         }.getOrNull()
+        if (fromBase64 != null && isPng(fromBase64)) return fromBase64
 
-        if (fromBase64 != null && isPng(fromBase64)) return@withContext fromBase64
-
-        val raw = runCatching {
-            val stream = mgr.openStream("exec:screencap -p")
-            try {
-                stream.openInputStream().use { it.readBytes() }
-            } finally {
-                runCatching { stream.close() }
-            }
-        }.getOrElse { error("Nie udało się pobrać obrazu ekranu przez ADB: ${it.message}") }
-
+        val stream = mgr.openStream("exec:screencap -p")
+        val raw = try {
+            stream.openInputStream().use { it.readBytes() }
+        } finally {
+            runCatching { stream.close() }
+        }
         check(isPng(raw)) { "ADB zwróciło dane, ale nie jest to prawidłowy screenshot PNG." }
-        raw
+        return raw
+    }
+
+    private fun discoverEndpointBlocking(serviceType: Int, timeoutMs: Long): AdbEndpoint {
+        val host = AtomicReference<String?>(null)
+        val port = AtomicInteger(-1)
+        val latch = CountDownLatch(1)
+        val mdns = AdbMdns(appContext, serviceType) { address, discoveredPort ->
+            if (address != null && discoveredPort > 0) {
+                host.set(address.hostAddress)
+                port.set(discoveredPort)
+            }
+            latch.countDown()
+        }
+        mdns.start()
+        try {
+            if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+                error(if (serviceType == AdbMdns.SERVICE_TYPE_TLS_PAIRING) {
+                    "Nie znaleziono portu parowania. Zostaw otwarte okno „Paruj urządzenie kodem” w ustawieniach Questa."
+                } else {
+                    "Nie znaleziono aktualnego portu połączenia Wireless ADB przez mDNS."
+                })
+            }
+        } finally {
+            mdns.stop()
+        }
+        val result = AdbEndpoint(host.get() ?: localHostAddress(), port.get())
+        check(result.port in 1..65535) { "mDNS nie zwrócił prawidłowego portu ADB." }
+        return result
+    }
+
+    private fun forceDisconnect(mgr: AbsAdbConnectionManager) {
+        runCatching { if (mgr.isConnected) mgr.disconnect() }
     }
 
     private fun validateDownloadApkPath(path: String): String {

@@ -18,13 +18,15 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pl.somaskan.questgpt.adb.AdbVisionMonitor
 import pl.somaskan.questgpt.adb.WirelessAdbController
 
 @Composable
-fun WirelessAdbScreen() {
+fun WirelessAdbScreen(embedded: Boolean = false) {
     val context = LocalContext.current
     val controller = remember { WirelessAdbController(context.applicationContext) }
     val scope = rememberCoroutineScope()
+    val rootScroll = rememberScrollState()
 
     var host by remember { mutableStateOf(controller.savedHost()) }
     var pairingPort by remember { mutableStateOf(controller.savedPairingPort()) }
@@ -38,14 +40,16 @@ fun WirelessAdbScreen() {
     LaunchedEffect(Unit) {
         val connected = withContext(Dispatchers.IO) { controller.isConnected() }
         status = if (connected) "Połączono z ADB" else "Niepołączony"
+        if (connected) AdbVisionMonitor.captureNow()
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    val rootModifier = if (embedded) {
+        Modifier.fillMaxWidth()
+    } else {
+        Modifier.fillMaxSize().verticalScroll(rootScroll)
+    }
+
+    Column(rootModifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -54,7 +58,7 @@ fun WirelessAdbScreen() {
             Column(Modifier.weight(1f)) {
                 Text("ADB Wireless", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    "Połącz QuestGPT z adbd przez Debugowanie bezprzewodowe — bez komputera i kabla.",
+                    "Kanał obrazu, drzewa UI i bezpiecznego sterowania GPT — bez komputera i kabla.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -146,7 +150,8 @@ fun WirelessAdbScreen() {
                                 check(controller.pair(host, port, pairingCode)) { "Parowanie nie powiodło się" }
                                 status = "Sparowano — szukam portu ADB..."
                                 check(controller.autoConnect()) { "Sparowano, ale nie udało się automatycznie połączyć" }
-                                "Połączono z ADB"
+                                AdbVisionMonitor.captureNow()
+                                "Połączono z ADB • Vision aktywne"
                             }.onSuccess { status = it }
                                 .onFailure { status = it.message ?: "Błąd parowania ADB" }
                             busy = false
@@ -154,7 +159,7 @@ fun WirelessAdbScreen() {
                     },
                     enabled = !busy && host.isNotBlank() && pairingPort.isNotBlank() && pairingCode.length == 6,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Sparuj i połącz automatycznie") }
+                ) { Text("Sparuj i uruchom Vision") }
             }
         }
 
@@ -168,8 +173,11 @@ fun WirelessAdbScreen() {
                             busy = true
                             status = "Wykrywam ADB..."
                             scope.launch {
-                                runCatching { controller.autoConnect() }
-                                    .onSuccess { status = if (it) "Połączono z ADB" else "Nie udało się połączyć" }
+                                runCatching {
+                                    val connected = controller.autoConnect()
+                                    if (connected) AdbVisionMonitor.captureNow()
+                                    connected
+                                }.onSuccess { status = if (it) "Połączono • GPT Vision aktywne" else "Nie udało się połączyć" }
                                     .onFailure { status = it.message ?: "Błąd połączenia" }
                                 busy = false
                             }
@@ -219,8 +227,10 @@ fun WirelessAdbScreen() {
                             scope.launch {
                                 runCatching {
                                     val port = connectPort.toIntOrNull() ?: error("Podaj port ADB")
-                                    controller.directConnect(host, port)
-                                }.onSuccess { status = if (it) "Połączono z ADB" else "Połączenie odrzucone" }
+                                    val connected = controller.directConnect(host, port)
+                                    if (connected) AdbVisionMonitor.captureNow()
+                                    connected
+                                }.onSuccess { status = if (it) "Połączono • GPT Vision aktywne" else "Połączenie odrzucone" }
                                     .onFailure { status = it.message ?: "Błąd połączenia" }
                                 busy = false
                             }
@@ -233,7 +243,8 @@ fun WirelessAdbScreen() {
 
         ElevatedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("ADB Shell", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("ADB Shell — diagnostyka ręczna", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("GPT Agent nie dostaje dostępu do dowolnego shella. Korzysta wyłącznie z ograniczonych narzędzi UI.", style = MaterialTheme.typography.bodySmall)
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -245,10 +256,7 @@ fun WirelessAdbScreen() {
                         "pm list packages -3",
                         "dumpsys window | head -n 40"
                     ).forEach { quick ->
-                        AssistChip(
-                            onClick = { command = quick },
-                            label = { Text(quick) }
-                        )
+                        AssistChip(onClick = { command = quick }, label = { Text(quick) })
                     }
                 }
 
@@ -287,18 +295,14 @@ fun WirelessAdbScreen() {
                     modifier = Modifier.fillMaxWidth().heightIn(min = 130.dp)
                 ) {
                     SelectionContainer {
-                        Text(
-                            text = output,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(12.dp)
-                        )
+                        Text(text = output, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(12.dp))
                     }
                 }
             }
         }
 
         Text(
-            "Klucz parowania ADB jest przechowywany wyłącznie w prywatnych danych QuestGPT. Po wyłączeniu Wireless Debugging system może zmienić port połączenia — wtedy użyj Auto Connect ponownie.",
+            "Klucz parowania ADB jest przechowywany wyłącznie w prywatnych danych QuestGPT. Auto Vision przechwytuje obraz lokalnie adaptacyjnie (0,5–2 FPS); do OpenAI trafia klatka wtedy, gdy jest potrzebna do odpowiedzi lub aktywnej rozmowy Live.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 18.dp)
         )

@@ -1,6 +1,7 @@
 package pl.somaskan.questgpt.adb
 
 import android.content.Context
+import android.util.Base64
 import io.github.muntashirakon.adb.AbsAdbConnectionManager
 import io.github.muntashirakon.adb.android.AdbMdns
 import io.github.muntashirakon.adb.android.AndroidUtils
@@ -109,6 +110,50 @@ class WirelessAdbController(context: Context) {
             runCatching { stream.close() }
         }
     }
+
+    suspend fun captureScreenshotPng(autoConnectIfNeeded: Boolean = true): ByteArray = withContext(Dispatchers.IO) {
+        val mgr = manager()
+        if (!mgr.isConnected && autoConnectIfNeeded) {
+            runCatching { mgr.autoConnect(appContext, 4_000L) }
+        }
+        check(mgr.isConnected) { "ADB nie jest połączone — najpierw użyj Auto Connect." }
+
+        val fromBase64 = runCatching {
+            val stream = mgr.openStream("shell:screencap -p | base64")
+            try {
+                val encoded = stream.openInputStream().bufferedReader(Charsets.US_ASCII).use { it.readText() }
+                val compact = encoded.filterNot(Char::isWhitespace)
+                Base64.decode(compact, Base64.DEFAULT)
+            } finally {
+                runCatching { stream.close() }
+            }
+        }.getOrNull()
+
+        if (fromBase64 != null && isPng(fromBase64)) return@withContext fromBase64
+
+        val raw = runCatching {
+            val stream = mgr.openStream("exec:screencap -p")
+            try {
+                stream.openInputStream().use { it.readBytes() }
+            } finally {
+                runCatching { stream.close() }
+            }
+        }.getOrElse { error("Nie udało się pobrać obrazu ekranu przez ADB: ${it.message}") }
+
+        check(isPng(raw)) { "ADB zwróciło dane, ale nie jest to prawidłowy screenshot PNG." }
+        raw
+    }
+
+    private fun isPng(bytes: ByteArray): Boolean =
+        bytes.size > 8 &&
+            bytes[0] == 0x89.toByte() &&
+            bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() &&
+            bytes[3] == 0x47.toByte() &&
+            bytes[4] == 0x0D.toByte() &&
+            bytes[5] == 0x0A.toByte() &&
+            bytes[6] == 0x1A.toByte() &&
+            bytes[7] == 0x0A.toByte()
 
     private fun saveEndpoint(host: String, pairPort: Int? = null, connectPort: Int? = null) {
         prefs.edit().apply {

@@ -21,14 +21,14 @@ fun VoiceScreen(state: String, onToggle: () -> Unit) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(state, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Dwukierunkowe audio OpenAI Realtime. W trybie ADB Vision GPT dostaje aktualny widok Questa i może używać bezpiecznych narzędzi tap/swipe/tekst podczas rozmowy.",
+                    "OpenAI Realtime działa jako osobna usługa mikrofonu, więc rozmowa może trwać także po schowaniu panelu QuestGPT. Po utracie sieci usługa automatycznie próbuje wznowić sesję. ADB Vision nadal przekazuje aktualny widok i narzędzia agenta.",
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
         }
         AdbVisionStatusCard(compact = false)
         Button(onClick = onToggle, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)) {
-            Text(if (state.startsWith("Połączono")) "Zatrzymaj rozmowę" else "Uruchom GPT Live")
+            Text(if (state.startsWith("Połączono") || state.startsWith("Ponowne łączenie") || state.startsWith("Łączenie")) "Zatrzymaj rozmowę" else "Uruchom GPT Live")
         }
         Spacer(Modifier.height(18.dp))
     }
@@ -143,6 +143,7 @@ fun SettingsScreen(
             ) {
                 AdbVisionStatusCard(compact = false)
                 WirelessAdbScreen(embedded = true)
+                DiagnosticsCard(backendUrl)
                 Spacer(Modifier.height(18.dp))
             }
         } else {
@@ -176,6 +177,7 @@ fun SettingsScreen(
                 PermissionRow("Mikrofon", micGranted, onMicPermission)
                 PermissionRow("Powiadomienia", notificationsGranted, onNotificationPermission)
                 PermissionRow("Instalowanie aktualizacji APK", installGranted, onInstallPermission)
+                DiagnosticsCard(backendUrl)
 
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Text(

@@ -49,6 +49,29 @@ object QuestDiagnostics {
         val installs = app.packageManager.canRequestPackageInstalls()
         items += DiagnosticItem("Aktualizacje APK", installs, if (installs) "Instalowanie APK dozwolone" else "Brak zgody na instalację z tego źródła")
 
+        val passthrough = PassthroughCameraCapture(app)
+        val cameraPermission = passthrough.hasPermission()
+        val cameraSupported = runCatching { passthrough.isSupported() }.getOrDefault(false)
+        val worldEnabled = WorldVisionManager.isEnabled(app)
+        items += DiagnosticItem(
+            "World Vision / passthrough camera",
+            cameraSupported && cameraPermission,
+            when {
+                !cameraSupported -> "Nie znaleziono kamery passthrough przez Camera2. Wymagany Quest 3/3S i odpowiednio nowy Horizon OS."
+                !cameraPermission -> "Kamera wykryta, ale brakuje CAMERA + HEADSET_CAMERA."
+                worldEnabled -> "Kamera gotowa; World Vision włączone."
+                else -> "Kamera gotowa; World Vision jest wyłączone przez użytkownika."
+            },
+        )
+        if (cameraSupported && cameraPermission && worldEnabled) {
+            val worldTest = runCatching { WorldVisionManager.captureNow(app) }
+            items += DiagnosticItem(
+                "Klatka fizycznego świata",
+                worldTest.isSuccess,
+                worldTest.fold({ "Przechwycono obraz JPEG (${it.length / 1024} KB data URL)" }, { it.message ?: "błąd kamery" }),
+            )
+        }
+
         items += DiagnosticItem(
             "Agent Service",
             AgentServiceController.isEnabled(app),

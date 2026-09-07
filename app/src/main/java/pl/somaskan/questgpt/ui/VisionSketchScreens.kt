@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 
@@ -54,9 +55,9 @@ fun VisionScreen(
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onPickImage, enabled = !busy, modifier = Modifier.weight(1f)) { Text("Wyślij zdjęcie") }
+            Button(onClick = onPickImage, enabled = !busy, modifier = Modifier.weight(1f)) { Text("Zdjęcie") }
             Button(onClick = onScreenshot, enabled = !busy, modifier = Modifier.weight(1f)) { Text("Screenshot") }
-            OutlinedButton(onClick = onOpenSketch, enabled = imageDataUrl != null && !busy, modifier = Modifier.weight(1f)) { Text("Zaznacz / rysuj") }
+            OutlinedButton(onClick = onOpenSketch, enabled = imageDataUrl != null && !busy, modifier = Modifier.weight(1f)) { Text("Zaznacz") }
         }
 
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -80,8 +81,8 @@ fun SketchScreen(
     onSendAnnotated: (List<List<Offset>>, IntSize) -> Unit,
 ) {
     val background = remember(backgroundDataUrl) { backgroundDataUrl?.let(::decodeDataUrlBitmap) }
-    val strokes = remember { mutableStateListOf<List<Offset>>() }
-    var activeStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
+    val strokes = remember(backgroundDataUrl) { mutableStateListOf<List<Offset>>() }
+    var activeStroke by remember(backgroundDataUrl) { mutableStateOf<List<Offset>>(emptyList()) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -106,8 +107,8 @@ fun SketchScreen(
             Canvas(
                 Modifier
                     .fillMaxSize()
-                    .onSizeChangedCompat { canvasSize = it }
-                    .pointerInput(Unit) {
+                    .onSizeChanged { canvasSize = it }
+                    .pointerInput(backgroundDataUrl) {
                         detectDragGestures(
                             onDragStart = { point -> activeStroke = listOf(point) },
                             onDrag = { change, _ -> activeStroke = activeStroke + change.position },
@@ -157,6 +158,3 @@ private fun decodeDataUrlBitmap(dataUrl: String): Bitmap? = runCatching {
     val bytes = Base64.decode(payload, Base64.DEFAULT)
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 }.getOrNull()
-
-private fun Modifier.onSizeChangedCompat(block: (IntSize) -> Unit): Modifier =
-    this.then(androidx.compose.ui.layout.onSizeChanged(block))

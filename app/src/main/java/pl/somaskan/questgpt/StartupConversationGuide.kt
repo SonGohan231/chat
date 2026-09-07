@@ -8,6 +8,7 @@ object StartupConversationGuide {
     private const val PREFS = "questgpt_startup"
     private const val KEY_ENABLED = "auto_conversation"
     private const val KEY_FULL_GUIDE_SHOWN = "full_guide_shown"
+    private const val KEY_MIC_REQUESTED = "mic_auto_requested"
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
@@ -28,6 +29,14 @@ object StartupConversationGuide {
     fun resetFullGuide(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_FULL_GUIDE_SHOWN, false).apply()
+    }
+
+    fun shouldAutoRequestMic(context: Context): Boolean =
+        !context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_MIC_REQUESTED, false)
+
+    fun markMicRequested(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_MIC_REQUESTED, true).apply()
     }
 
     fun buildPrompt(

@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
+import pl.somaskan.questgpt.adb.WirelessAdbController
 import pl.somaskan.questgpt.data.Board
 import pl.somaskan.questgpt.data.BoardStore
 import pl.somaskan.questgpt.files.FileWorkspace
@@ -75,6 +76,9 @@ class MainActivity : ComponentActivity() {
     private var localLiveOverride by mutableStateOf(false)
     private val liveConfigClient = LiveConfigClient()
     private var liveRefreshJob: Job? = null
+
+    private var pendingStartupPrompt: String? = null
+    private var startupGuideRunning = false
 
     private lateinit var voice: RealtimeVoiceClient
     private lateinit var files: FileWorkspace
@@ -149,7 +153,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startVoice() else addSystemMessage("Mikrofon nie został udostępniony")
+        val startupPrompt = pendingStartupPrompt
+        pendingStartupPrompt = null
+        if (granted) {
+            currentScreen = AppScreen.VOICE
+            startVoice(startupPrompt)
+        } else {
+            addSystemMessage("Mikrofon nie został udostępniony. QuestGPT może kontynuować w trybie tekstowym.")
+            if (!startupPrompt.isNullOrBlank()) startTextStartupGuide(startupPrompt)
+        }
     }
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -305,6 +317,7 @@ class MainActivity : ComponentActivity() {
 
         startLiveConfigSync()
         checkForUpdate(true)
+        scheduleStartupConversation()
     }
 
     override fun onDestroy() {
@@ -632,13 +645,93 @@ class MainActivity : ComponentActivity() {
         if (!hasPermission(Manifest.permission.RECORD_AUDIO)) micPermission.launch(Manifest.permission.RECORD_AUDIO) else startVoice()
     }
 
-    private fun startVoice() {
+    private fun startVoice(initialPrompt: String? = null) {
         if (backendUrl.isBlank()) {
             addSystemMessage("Ustaw Backend URL")
             return
         }
         assistantVoiceDraft = ""
-        voice.start(backendUrl)
+        voice.start(backendUrl, initialPrompt)
+    }
+
+    private fun scheduleStartupConversation() {
+        if (!StartupConversationGuide.isEnabled(this) || !StartupConversationGuide.canStartNow(this)) return
+        uiScope.launch {
+            delay(900L)
+            startStartupConversation()
+        }
+    }
+
+    private suspend fun startStartupConversation() {
+        if (startupGuideRunning || !StartupConversationGuide.isEnabled(this) || !StartupConversationGuide.canStartNow(this)) return
+        startupGuideRunning = true
+        StartupConversationGuide.markStarted(this)
+        AgentServiceController.startIfEnabled(applicationContext)
+
+        val controller = WirelessAdbController(applicationContext)
+        val adbConnected = if (controller.isConnected()) {
+            true
+        } else {
+            runCatching { controller.autoConnect(3_500L) }.getOrDefault(false)
+        }
+        val fullGuide = StartupConversationGuide.needsFullGuide(this)
+        val micGranted = hasPermission(Manifest.permission.RECORD_AUDIO)
+        val notificationsGranted = Build.VERSION.SDK_INT < 33 || hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+        val installGranted = updateManager.canRequestPackageInstalls()
+        val prompt = StartupConversationGuide.buildPrompt(
+            context = this,
+            fullGuide = fullGuide,
+            adbConnected = adbConnected,
+            micGranted = micGranted,
+            notificationsGranted = notificationsGranted,
+            installGranted = installGranted,
+        )
+        if (fullGuide) StartupConversationGuide.markFullGuideShown(this)
+
+        when {
+            micGranted -> {
+                currentScreen = AppScreen.VOICE
+                startVoice(prompt)
+            }
+            StartupConversationGuide.shouldAutoRequestMic(this) -> {
+                pendingStartupPrompt = prompt
+                currentScreen = AppScreen.CHAT
+                messages += ChatLine(
+                    "assistant",
+                    "Cześć. QuestGPT uruchomił przewodnik startowy. Najpierw zezwól na mikrofon — wtedy zacznę mówić i przeprowadzę Cię przez ADB Vision, sterowanie, uprawnienia i pozostałe funkcje."
+                )
+                saveCurrentSession()
+                StartupConversationGuide.markMicRequested(this)
+                micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            }
+            else -> {
+                currentScreen = AppScreen.CHAT
+                startTextStartupGuide(prompt)
+            }
+        }
+        startupGuideRunning = false
+    }
+
+    private fun startTextStartupGuide(prompt: String) {
+        if (backendUrl.isBlank() || busy) return
+        busy = true
+        uiScope.launch {
+            runCatching { backend.respond(backendUrl, prompt, null, previousResponseId) }
+                .onSuccess {
+                    previousResponseId = it.responseId
+                    messages += ChatLine("assistant", it.text.ifBlank { "QuestGPT jest uruchomiony. Włącz mikrofon w Ustawieniach, aby przejść do rozmowy głosowej." })
+                    saveCurrentSession()
+                }
+                .onFailure {
+                    messages += ChatLine(
+                        "assistant",
+                        "QuestGPT jest uruchomiony. Mikrofon nie jest dostępny, więc działam tekstowo. Wejdź w Ustawienia > OpenAI i uprawnienia, włącz mikrofon, a następnie Ustawienia > ADB + Agent, aby skonfigurować widzenie i sterowanie."
+                    )
+                    saveCurrentSession()
+                    addSystemMessage("Przewodnik startowy: ${it.message ?: "błąd połączenia"}")
+                }
+            busy = false
+        }
     }
 
     private fun requestScreenshot(target: CaptureTarget) {

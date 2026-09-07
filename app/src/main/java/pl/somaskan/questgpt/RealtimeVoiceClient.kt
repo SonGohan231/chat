@@ -48,14 +48,16 @@ class RealtimeVoiceClient(
     private var visionJob: Job? = null
     @Volatile private var lastVisionSentAt = 0L
     @Volatile private var lastVisionHash: String? = null
+    @Volatile private var startupPrompt: String? = null
 
-    fun start(baseUrl: String) {
+    fun start(baseUrl: String, initialPrompt: String? = null) {
         if (socket != null) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             onError("Brak uprawnienia do mikrofonu")
             return
         }
 
+        startupPrompt = initialPrompt?.takeIf { it.isNotBlank() }
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         onState("Łączenie z OpenAI...")
         scope?.launch {
@@ -101,9 +103,10 @@ class RealtimeVoiceClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 onState("Połączono z OpenAI • Vision/Agent aktywny")
                 configureSession(webSocket)
+                startAudio(webSocket)
                 refreshVisionContext(webSocket, force = true)
                 startVisionPump(webSocket)
-                startAudio(webSocket)
+                speakStartupPrompt(webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -132,6 +135,34 @@ class RealtimeVoiceClient(
                 onState("Głos rozłączony")
             }
         })
+    }
+
+    private fun speakStartupPrompt(webSocket: WebSocket) {
+        val prompt = startupPrompt?.takeIf { it.isNotBlank() } ?: return
+        startupPrompt = null
+        scope?.launch {
+            delay(450L)
+            webSocket.send(
+                JSONObject()
+                    .put("type", "conversation.item.create")
+                    .put(
+                        "item",
+                        JSONObject()
+                            .put("type", "message")
+                            .put("role", "user")
+                            .put(
+                                "content",
+                                JSONArray().put(
+                                    JSONObject()
+                                        .put("type", "input_text")
+                                        .put("text", prompt)
+                                )
+                            )
+                    )
+                    .toString()
+            )
+            webSocket.send(JSONObject().put("type", "response.create").toString())
+        }
     }
 
     private fun handleToolCall(webSocket: WebSocket, event: JSONObject) {
@@ -338,6 +369,7 @@ class RealtimeVoiceClient(
         scope = null
         lastVisionSentAt = 0L
         lastVisionHash = null
+        startupPrompt = null
         onState("Głos wyłączony")
     }
 }

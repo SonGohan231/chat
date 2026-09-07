@@ -17,5 +17,17 @@
     "Pomysły"
   ],
   "refreshSeconds": 15,
-  "updatedAt": "2026-09-07T05:12:00+02:00"
+  "updatedAt": "2026-09-07T10:49:00+02:00",
+  "ui": {
+    "floatingPanels": true,
+    "panelOpacity": 0.96,
+    "panelCornerDp": 24,
+    "navWidthDp": 126,
+    "contentPaddingDp": 14,
+    "panelSpacingDp": 10,
+    "fontScale": 1.0,
+    "backgroundDim": 0.12,
+    "navigationLabels": true,
+    "showPanelHeader": true
+  }
 }

@@ -7,52 +7,27 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
 import pl.somaskan.questgpt.adb.AdbVisionMonitor
 import pl.somaskan.questgpt.adb.WirelessAdbController
-import java.util.concurrent.TimeUnit
 
 data class DiagnosticItem(val name: String, val ok: Boolean, val detail: String)
 data class DiagnosticReport(val items: List<DiagnosticItem>, val ranAt: Long = System.currentTimeMillis())
 
 object QuestDiagnostics {
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .build()
-
     suspend fun run(context: Context, backendUrl: String): DiagnosticReport = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         val items = mutableListOf<DiagnosticItem>()
 
-        val backend = QuestEndpoints.resolveBackend(backendUrl)
-        val backendResult = runCatching {
-            http.newCall(Request.Builder().url("$backend/api/health").get().build()).execute().use { response ->
-                check(response.isSuccessful) { "HTTP ${response.code}" }
-                response.body?.string().orEmpty().take(240)
-            }
-        }
+        // This is the exact credential path used by Chat and GPT Live. It deliberately
+        // does not treat a 200 HTML frontend shell as a healthy OpenAI backend.
+        val realtimeBridge = runCatching { RealtimeCredentialProvider.fetch(backendUrl, "voice") }
         items += DiagnosticItem(
-            "Backend OpenAI",
-            backendResult.isSuccess,
-            backendResult.getOrElse { it.message ?: "brak połączenia" }.ifBlank { "OK" },
-        )
-
-        val realtimeToken = runCatching {
-            http.newCall(Request.Builder().url("$backend/api/realtime-token?mode=text").get().build()).execute().use { response ->
-                val raw = response.body?.string().orEmpty()
-                check(response.isSuccessful) { "HTTP ${response.code}: ${raw.take(180)}" }
-                val json = JSONObject(raw)
-                check(json.optString("value").isNotBlank()) { "brak client secret" }
-                "GET działa • model=${json.optString("model", "gpt-realtime")} • tryb=${json.optString("modality", "text")}"
-            }
-        }
-        items += DiagnosticItem(
-            "Native Realtime token",
-            realtimeToken.isSuccess,
-            realtimeToken.getOrElse { it.message ?: "nie udało się pobrać krótkotrwałego tokenu" },
+            "OpenAI Realtime / most",
+            realtimeBridge.isSuccess,
+            realtimeBridge.fold(
+                onSuccess = { "Gotowe • ${it.transport} • model=${it.model}" },
+                onFailure = { it.message ?: "Nie udało się pobrać krótkotrwałego tokenu Realtime" },
+            ),
         )
 
         val mic = ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -104,14 +79,22 @@ object QuestDiagnostics {
         )
 
         val adb = WirelessAdbController(app)
-        val connected = if (adb.isConnected()) true else runCatching { adb.autoConnect(3_500L) }.getOrDefault(false)
-        items += DiagnosticItem("Wireless ADB", connected, if (connected) "Połączone" else "Nie udało się połączyć z zapisanym ADB")
+        val connected = runCatching { adb.isUsable(8_000L) }.getOrDefault(false)
+        items += DiagnosticItem(
+            "Wireless ADB",
+            connected,
+            if (connected) "Połączone • kanał shell potwierdzony" else "Brak działającego kanału shell. QuestGPT spróbował odświeżyć port TLS przez mDNS.",
+        )
 
         if (connected) {
             val shell = runCatching { adb.runCommand("echo QUESTGPT_ADB_OK") }
-            items += DiagnosticItem("ADB shell", shell.getOrNull()?.contains("QUESTGPT_ADB_OK") == true, shell.getOrElse { it.message ?: "błąd shell" }.take(240))
+            items += DiagnosticItem(
+                "ADB shell",
+                shell.getOrNull()?.contains("QUESTGPT_ADB_OK") == true,
+                shell.getOrElse { it.message ?: "błąd shell" }.take(240),
+            )
 
-            val screenshot = runCatching { adb.captureScreenshotPng(autoConnectIfNeeded = false) }
+            val screenshot = runCatching { adb.captureScreenshotPng(autoConnectIfNeeded = true) }
             items += DiagnosticItem(
                 "ADB screenshot",
                 screenshot.isSuccess,
@@ -134,7 +117,7 @@ object QuestDiagnostics {
         val app = context.applicationContext
         AgentServiceController.startIfEnabled(app)
         AdbVisionMonitor.start()
-        runCatching { WirelessAdbController(app).autoConnect(6_000L) }
+        runCatching { WirelessAdbController(app).isUsable(10_000L) }
         if (VoiceAgentRuntime.desiredRunning && ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             runCatching { VoiceAgentController.start(app, backendUrl) }
         }

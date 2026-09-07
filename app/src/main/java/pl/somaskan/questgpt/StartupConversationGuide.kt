@@ -9,6 +9,8 @@ object StartupConversationGuide {
     private const val KEY_ENABLED = "auto_conversation"
     private const val KEY_FULL_GUIDE_SHOWN = "full_guide_shown"
     private const val KEY_MIC_REQUESTED = "mic_auto_requested"
+    private const val KEY_LAST_STARTED_AT = "last_started_at"
+    private const val START_DEBOUNCE_MS = 30_000L
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
@@ -16,6 +18,16 @@ object StartupConversationGuide {
     fun setEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    fun canStartNow(context: Context): Boolean {
+        val last = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_LAST_STARTED_AT, 0L)
+        return System.currentTimeMillis() - last >= START_DEBOUNCE_MS
+    }
+
+    fun markStarted(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putLong(KEY_LAST_STARTED_AT, System.currentTimeMillis()).apply()
     }
 
     fun needsFullGuide(context: Context): Boolean =
@@ -59,7 +71,7 @@ object StartupConversationGuide {
         return """
             $mode
 
-            Jesteś QuestGPT działającym natywnie na Meta Quest 3. Mów po polsku, naturalnie, krótko i praktycznie. Nie czekaj, aż użytkownik odezwie się pierwszy.
+            Jesteś QuestGPT działającym natywnie na Meta Quest 3. Mów po polsku, naturalnie, krótko i praktycznie. Nie czekaj, aż użytkownik odezwie się pierwszy. W tej wypowiedzi startowej niczego nie klikaj ani nie zmieniaj — tylko przedstaw stan, możliwości i następny krok.
 
             Stan bieżący:
             - mikrofon: ${if (micGranted) "gotowy" else "brak uprawnienia"}

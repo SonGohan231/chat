@@ -35,6 +35,10 @@ class FileWorkspace(private val context: Context) {
         }
     }
 
+    fun renameDocument(uri: Uri, newName: String): Uri? = runCatching {
+        DocumentsContract.renameDocument(context.contentResolver, uri, newName)
+    }.getOrNull()
+
     fun deleteDocument(uri: Uri): Boolean = runCatching {
         DocumentsContract.deleteDocument(context.contentResolver, uri)
     }.getOrDefault(false)

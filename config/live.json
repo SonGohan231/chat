@@ -16,17 +16,17 @@
     "Zadania",
     "Pomysły"
   ],
-  "refreshSeconds": 15,
-  "updatedAt": "2026-09-07T10:49:00+02:00",
+  "refreshSeconds": 10,
+  "updatedAt": "2026-09-07T11:13:00+02:00",
   "ui": {
     "floatingPanels": true,
-    "panelOpacity": 0.96,
-    "panelCornerDp": 24,
-    "navWidthDp": 126,
-    "contentPaddingDp": 14,
-    "panelSpacingDp": 10,
-    "fontScale": 1.0,
-    "backgroundDim": 0.12,
+    "panelOpacity": 1.0,
+    "panelCornerDp": 20,
+    "navWidthDp": 164,
+    "contentPaddingDp": 18,
+    "panelSpacingDp": 12,
+    "fontScale": 1.22,
+    "backgroundDim": 0.28,
     "navigationLabels": true,
     "showPanelHeader": true
   }

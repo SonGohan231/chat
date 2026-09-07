@@ -79,24 +79,10 @@ class RealtimeVoiceClient(
 
     private data class RealtimeCredential(val token: String, val model: String)
 
-    private fun fetchRealtimeCredential(baseUrl: String): RealtimeCredential {
-        val backend = QuestEndpoints.resolveBackend(baseUrl)
-        val request = Request.Builder()
-            .url(backend + "/api/realtime-token")
-            .get()
-            .build()
-        http.newCall(request).execute().use { response ->
-            val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                val message = runCatching { JSONObject(raw).optString("error") }.getOrNull().orEmpty()
-                error(if (message.isNotBlank()) message else "Realtime backend ${response.code}: ${raw.take(800)}")
-            }
-            val json = JSONObject(raw)
-            val token = json.optString("value")
-            val model = json.optString("model", "gpt-realtime")
-            check(token.isNotBlank()) { "Backend nie zwrócił krótkotrwałego tokenu Realtime" }
-            return RealtimeCredential(token, model)
-        }
+    private suspend fun fetchRealtimeCredential(baseUrl: String): RealtimeCredential {
+        val credential = RealtimeCredentialProvider.fetch(baseUrl, "voice")
+        onState("Token Realtime: ${credential.transport}")
+        return RealtimeCredential(credential.token, credential.model)
     }
 
     private fun connectDirect(credential: RealtimeCredential) {

@@ -18,10 +18,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -85,13 +83,13 @@ class RealtimeVoiceClient(
         val backend = QuestEndpoints.resolveBackend(baseUrl)
         val request = Request.Builder()
             .url(backend + "/api/realtime-token")
-            .post("{}".toRequestBody("application/json".toMediaType()))
+            .get()
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val message = runCatching { JSONObject(raw).optString("error") }.getOrNull().orEmpty()
-                error(if (message.isNotBlank()) message else "Realtime backend ${response.code}: $raw")
+                error(if (message.isNotBlank()) message else "Realtime backend ${response.code}: ${raw.take(800)}")
             }
             val json = JSONObject(raw)
             val token = json.optString("value")

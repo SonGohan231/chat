@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import pl.somaskan.questgpt.adb.AdbVisionMonitor
 import pl.somaskan.questgpt.adb.WirelessAdbController
 import java.util.concurrent.TimeUnit
@@ -37,6 +38,21 @@ object QuestDiagnostics {
             "Backend OpenAI",
             backendResult.isSuccess,
             backendResult.getOrElse { it.message ?: "brak połączenia" }.ifBlank { "OK" },
+        )
+
+        val realtimeToken = runCatching {
+            http.newCall(Request.Builder().url("$backend/api/realtime-token?mode=text").get().build()).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                check(response.isSuccessful) { "HTTP ${response.code}: ${raw.take(180)}" }
+                val json = JSONObject(raw)
+                check(json.optString("value").isNotBlank()) { "brak client secret" }
+                "GET działa • model=${json.optString("model", "gpt-realtime")} • tryb=${json.optString("modality", "text")}"
+            }
+        }
+        items += DiagnosticItem(
+            "Native Realtime token",
+            realtimeToken.isSuccess,
+            realtimeToken.getOrElse { it.message ?: "nie udało się pobrać krótkotrwałego tokenu" },
         )
 
         val mic = ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

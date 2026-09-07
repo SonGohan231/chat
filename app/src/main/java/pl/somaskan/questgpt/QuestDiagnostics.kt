@@ -90,10 +90,10 @@ object QuestDiagnostics {
         )
 
         if (connected) {
-            val shell = runCatching { adb.runCommand("echo QUESTGPT_ADB_OK") }
+            val shell = runCatching { adb.runCommand("id") }
             items += DiagnosticItem(
                 "ADB shell",
-                shell.getOrNull()?.contains("QUESTGPT_ADB_OK") == true,
+                shell.getOrNull()?.contains("uid=") == true,
                 shell.getOrElse { it.message ?: "błąd shell" }.take(240),
             )
 
@@ -106,10 +106,22 @@ object QuestDiagnostics {
 
             val hierarchy = runCatching { adb.uiHierarchyXml() }
             val hierarchyText = hierarchy.getOrDefault("")
+            val hierarchyAvailable = hierarchy.isSuccess && hierarchyText.contains("<hierarchy")
+            val visualFallbackAvailable = screenshot.isSuccess
             items += DiagnosticItem(
-                "UIAutomator",
-                hierarchy.isSuccess && hierarchyText.contains("<hierarchy"),
-                if (hierarchyText.contains("<hierarchy")) "Drzewo UI: ${hierarchyText.length} znaków" else hierarchy.exceptionOrNull()?.message ?: "Brak drzewa UI",
+                "UIAutomator / fallback obrazowy",
+                hierarchyAvailable || visualFallbackAvailable,
+                when {
+                    hierarchyAvailable -> "Drzewo UI: ${hierarchyText.length} znaków"
+                    visualFallbackAvailable -> "Ta powierzchnia nie udostępnia drzewa UI; agent użyje screenshotu i sterowania współrzędnymi."
+                    else -> hierarchy.exceptionOrNull()?.message ?: "Brak drzewa UI i brak obrazu zastępczego"
+                },
+            )
+        } else if (cameraSupported && cameraPermission && worldEnabled) {
+            items += DiagnosticItem(
+                "Vision fallback",
+                true,
+                "ADB jest niedostępne, ale czat i GPT Live mogą korzystać z World Vision / passthrough. Sterowanie ADB pozostaje wyłączone do czasu ponownego połączenia.",
             )
         }
 

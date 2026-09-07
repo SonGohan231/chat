@@ -29,6 +29,7 @@ import pl.somaskan.questgpt.adb.AdbAgent
 import pl.somaskan.questgpt.adb.AdbVisionMonitor
 import pl.somaskan.questgpt.adb.AgentToolCall
 import pl.somaskan.questgpt.adb.QuestAgentRuntime
+import pl.somaskan.questgpt.adb.WirelessAdbController
 import java.util.concurrent.TimeUnit
 
 class RealtimeVoiceClient(
@@ -195,19 +196,40 @@ class RealtimeVoiceClient(
         if (!force && now - lastVisionSentAt < 1_500L) return
         lastVisionSentAt = now
         scope?.launch {
-            val observation = runCatching { AdbAgent.observe() }.getOrNull() ?: return@launch
+            val observation = runCatching { AdbAgent.observe() }.getOrNull()
+            val worldOnly = if (observation == null) {
+                runCatching { WorldVisionManager.captureDataUrlIfEnabled(context.applicationContext) }.getOrNull()
+            } else {
+                null
+            }
+            if (observation == null && worldOnly == null) return@launch
+
             val content = JSONArray().apply {
-                put(
-                    JSONObject()
-                        .put("type", "input_text")
-                        .put(
-                            "text",
-                            "Aktualny kontekst Meta Quest 3. Aktywne okno: ${observation.currentActivity}. " +
-                                "Rozmiar: ${observation.displaySize}. Drzewo UI:\n${observation.uiSummary.take(10_000)}"
-                        )
-                )
-                observation.imageDataUrl?.takeIf { it.startsWith("data:image/") }?.let { image ->
-                    put(JSONObject().put("type", "input_image").put("image_url", image).put("detail", "auto"))
+                if (observation != null) {
+                    put(
+                        JSONObject()
+                            .put("type", "input_text")
+                            .put(
+                                "text",
+                                "Aktualny kontekst Meta Quest 3. Aktywne okno: ${observation.currentActivity}. " +
+                                    "Rozmiar: ${observation.displaySize}. Drzewo UI:\n${observation.uiSummary.take(10_000)}"
+                            )
+                    )
+                    observation.imageDataUrl?.takeIf { it.startsWith("data:image/") }?.let { image ->
+                        put(JSONObject().put("type", "input_image").put("image_url", image).put("detail", "auto"))
+                    }
+                } else {
+                    put(
+                        JSONObject()
+                            .put("type", "input_text")
+                            .put(
+                                "text",
+                                "ADB Vision jest niedostępne. To aktualna klatka WORLD / passthrough z kamery Meta Quest 3; użyj jej jako bieżącego widoku użytkownika."
+                            )
+                    )
+                    worldOnly?.takeIf { it.startsWith("data:image/") }?.let { image ->
+                        put(JSONObject().put("type", "input_image").put("image_url", image).put("detail", "auto"))
+                    }
                 }
             }
             webSocket.send(
@@ -222,7 +244,11 @@ class RealtimeVoiceClient(
                     )
                     .toString()
             )
-            lastVisionHash = AdbVisionMonitor.latest()?.hash
+            lastVisionHash = if (observation != null) {
+                AdbVisionMonitor.latest()?.hash
+            } else {
+                worldOnly?.hashCode()?.toString()
+            }
         }
     }
 
@@ -232,7 +258,13 @@ class RealtimeVoiceClient(
             while (isActive) {
                 delay(900L)
                 if (!QuestAgentRuntime.autoVisionEnabled) continue
-                val frame = AdbVisionMonitor.latest() ?: continue
+                val frame = AdbVisionMonitor.latest()
+                if (frame == null) {
+                    if (System.currentTimeMillis() - lastVisionSentAt >= 3_000L) {
+                        refreshVisionContext(webSocket)
+                    }
+                    continue
+                }
                 if (frame.hash == lastVisionHash) continue
                 val now = System.currentTimeMillis()
                 if (now - lastVisionSentAt < 2_500L) continue
@@ -286,15 +318,22 @@ class RealtimeVoiceClient(
                 })
             })
 
-        val tools = AdbAgent.realtimeTools()
-        if (tools.length() > 0) {
-            session.put("tools", tools)
-            session.put("tool_choice", "auto")
+        val adbConnected = runCatching { WirelessAdbController(context.applicationContext).isConnected() }.getOrDefault(false)
+        if (adbConnected) {
+            val tools = AdbAgent.realtimeTools()
+            if (tools.length() > 0) {
+                session.put("tools", tools)
+                session.put("tool_choice", "auto")
+            }
         }
         webSocket.send(JSONObject().put("type", "session.update").put("session", session).toString())
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     private fun startAudio(webSocket: WebSocket) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Brak uprawnienia do mikrofonu. Zezwól QuestGPT na mikrofon w Ustawieniach Questa.")
+        }
         val minIn = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         check(minIn > 0) { "Quest nie zwrócił prawidłowego bufora wejścia audio ($minIn)." }
         val inputFormat = AudioFormat.Builder()

@@ -41,10 +41,16 @@ class OpenAIBackend(
 
         QuestAgentRuntime.resetTurn()
         val firstObservation = currentObservation()
+        val worldFallback = if (firstObservation == null && imageDataUrl.isNullOrBlank()) {
+            runCatching { WorldVisionManager.captureDataUrlIfEnabled(QuestApp.appContext) }.getOrNull()
+        } else {
+            null
+        }
+        val firstImage = imageDataUrl ?: worldFallback
         var step = postResponse(
             apiKey = apiKey,
             model = model,
-            input = JSONArray().put(userMessage(text, imageDataUrl, firstObservation)),
+            input = JSONArray().put(userMessage(text, firstImage, firstObservation)),
             previousResponseId = previousResponseId,
             allowTools = firstObservation != null && QuestAgentRuntime.agentControlEnabled,
         )
@@ -162,6 +168,8 @@ class OpenAIBackend(
                 append("\nRozmiar: ").append(observation.displaySize.take(250))
                 append("\nScreenshot pusty/chroniony: ").append(observation.likelyBlank)
                 append("\nDrzewo UI:\n").append(observation.uiSummary.take(12_000))
+            } else if (!explicitImage.isNullOrBlank()) {
+                append("\n\nADB Vision jest niedostępne; dołączony obraz może pochodzić z World Vision / passthrough i należy traktować go jako aktualny widok użytkownika.")
             }
         }
         content.put(JSONObject().put("type", "input_text").put("text", contextText))

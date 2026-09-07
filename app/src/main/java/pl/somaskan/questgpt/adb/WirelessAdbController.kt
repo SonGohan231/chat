@@ -3,12 +3,15 @@ package pl.somaskan.questgpt.adb
 import android.content.Context
 import android.util.Base64
 import io.github.muntashirakon.adb.AbsAdbConnectionManager
+import io.github.muntashirakon.adb.LocalServices
 import io.github.muntashirakon.adb.android.AdbMdns
 import io.github.muntashirakon.adb.android.AndroidUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.net.InetAddress
+import java.net.NetworkInterface
 import java.net.URI
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -30,11 +33,18 @@ class WirelessAdbController(context: Context) {
         runCatching { AndroidUtils.getHostIpAddress(appContext) }
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
-            ?: "127.0.0.1"
+            ?: LOOPBACK
 
     fun savedHost(): String = prefs.getString("host", null)?.takeIf { it.isNotBlank() } ?: localHostAddress()
     fun savedPairingPort(): String = prefs.getInt("pair_port", -1).takeIf { it > 0 }?.toString().orEmpty()
     fun savedConnectPort(): String = prefs.getInt("connect_port", -1).takeIf { it > 0 }?.toString().orEmpty()
+
+    fun connectionSummary(): String {
+        val route = prefs.getString("last_route", null).orEmpty()
+        val host = prefs.getString("last_connect_host", null).orEmpty()
+        val port = prefs.getInt("last_connect_port", -1)
+        return if (host.isNotBlank() && port > 0) "$route • $host:$port" else "brak potwierdzonego kanału"
+    }
 
     suspend fun discoverPairingEndpoint(timeoutMs: Long = 12_000L): AdbEndpoint = withContext(Dispatchers.IO) {
         discoverEndpointBlocking(AdbMdns.SERVICE_TYPE_TLS_PAIRING, timeoutMs).also {
@@ -56,7 +66,7 @@ class WirelessAdbController(context: Context) {
         if (paired) {
             saveEndpoint(host.trim(), pairPort = port)
             Thread.sleep(350L)
-            runCatching { ensureConnectedInternal(6_000L) }
+            runCatching { ensureConnectedInternal(7_000L) }
         }
         paired
     }
@@ -72,30 +82,32 @@ class WirelessAdbController(context: Context) {
     suspend fun directConnect(host: String, port: Int): Boolean = withContext(Dispatchers.IO) {
         require(host.isNotBlank()) { "Podaj adres IP urządzenia." }
         require(port in 1..65535) { "Nieprawidłowy port połączenia ADB." }
+        val cleanHost = host.trim()
         val mgr = manager()
-        forceDisconnect(mgr)
-        val connected = runCatching { mgr.connect(host.trim(), port) }.getOrDefault(false)
-        val usable = (connected || mgr.isConnected) && probeConnection(mgr)
-        if (usable) saveEndpoint(host.trim(), connectPort = port) else forceDisconnect(mgr)
-        usable
+        val candidates = if (isSelfHost(cleanHost)) linkedSetOf(LOOPBACK, cleanHost) else linkedSetOf(cleanHost)
+        candidates.any { candidate ->
+            tryConnectAndProbe(mgr, candidate, port, if (candidate == LOOPBACK) "manual-loopback" else "manual")
+        }.also { usable ->
+            if (usable) saveEndpoint(cleanHost, connectPort = port)
+        }
     }
 
     suspend fun disconnect() = withContext(Dispatchers.IO) {
         forceDisconnect(manager())
+        prefs.edit().remove("last_route").remove("last_connect_host").remove("last_connect_port").apply()
     }
 
     suspend fun runCommand(command: String): String = withContext(Dispatchers.IO) {
         val clean = command.trim()
         require(clean.isNotEmpty()) { "Polecenie jest puste." }
-        check(ensureConnectedInternal(7_000L)) {
-            "ADB nie ma aktywnego kanału shell. Otwórz Debugowanie bezprzewodowe i użyj Auto Connect."
+        check(ensureConnectedInternal(8_000L)) {
+            "ADB nie ma aktywnego kanału shell. Włącz Debugowanie bezprzewodowe i użyj Auto Connect."
         }
-
         val mgr = manager()
         runCatching { rawRunCommand(mgr, clean) }.getOrElse { first ->
             forceDisconnect(mgr)
-            check(ensureConnectedInternal(7_000L)) {
-                "ADB rozłączyło się (${first.message}). Nie udało się odnaleźć nowego portu połączenia."
+            check(ensureConnectedInternal(8_000L)) {
+                "ADB utraciło kanał shell (${first.message}). Nie udało się odzyskać aktualnego portu Wireless ADB."
             }
             rawRunCommand(mgr, clean)
         }
@@ -244,16 +256,15 @@ class WirelessAdbController(context: Context) {
     }
 
     suspend fun captureScreenshotPng(autoConnectIfNeeded: Boolean = true): ByteArray = withContext(Dispatchers.IO) {
-        val mgr = manager()
-        val timeout = if (autoConnectIfNeeded) 7_000L else 4_000L
+        val timeout = if (autoConnectIfNeeded) 8_000L else 5_000L
         check(ensureConnectedInternal(timeout)) {
-            "ADB nie ma aktywnego kanału screencap — włącz Debugowanie bezprzewodowe i użyj Auto Connect."
+            "ADB nie ma działającego kanału screencap. Włącz Debugowanie bezprzewodowe i użyj Auto Connect."
         }
-
+        val mgr = manager()
         runCatching { captureScreenshotOnce(mgr) }.getOrElse { first ->
             forceDisconnect(mgr)
-            check(ensureConnectedInternal(7_000L)) {
-                "ADB rozłączyło się podczas screencap (${first.message}). Nie znaleziono nowego portu."
+            check(ensureConnectedInternal(8_000L)) {
+                "ADB rozłączyło się podczas screencap (${first.message}). Nie udało się odzyskać portu."
             }
             captureScreenshotOnce(mgr)
         }
@@ -264,74 +275,105 @@ class WirelessAdbController(context: Context) {
         if (mgr.isConnected && probeConnection(mgr)) return true
         forceDisconnect(mgr)
 
-        val mdnsTimeout = timeoutMs.coerceIn(1_500L, 8_000L)
+        val savedPort = prefs.getInt("connect_port", -1)
+        if (savedPort in 1..65535) {
+            if (tryConnectAndProbe(mgr, LOOPBACK, savedPort, "saved-loopback")) return true
+            val saved = savedHost()
+            if (!isLoopback(saved) && tryConnectAndProbe(mgr, saved, savedPort, "saved-host")) return true
+        }
+
+        val mdnsTimeout = timeoutMs.coerceIn(2_000L, 10_000L)
         val discovered = runCatching {
             discoverEndpointBlocking(AdbMdns.SERVICE_TYPE_TLS_CONNECT, mdnsTimeout)
         }.getOrNull()
         if (discovered != null) {
-            val connected = runCatching { mgr.connect(discovered.host, discovered.port) }.getOrDefault(false)
-            if ((connected || mgr.isConnected) && probeConnection(mgr)) {
+            // libadb explicitly recommends 127.0.0.1 when client and daemon are on the same device.
+            if (tryConnectAndProbe(mgr, LOOPBACK, discovered.port, "mDNS-loopback")) {
                 saveEndpoint(discovered.host, connectPort = discovered.port)
                 return true
             }
-            forceDisconnect(mgr)
+            if (tryConnectAndProbe(mgr, discovered.host, discovered.port, "mDNS-host")) {
+                saveEndpoint(discovered.host, connectPort = discovered.port)
+                return true
+            }
         }
 
+        // Last resort for firmwares where mDNS filtering behaves differently.
         val auto = runCatching { mgr.autoConnect(appContext, timeoutMs) }.getOrDefault(false)
-        if ((auto || mgr.isConnected) && probeConnection(mgr)) return true
-        forceDisconnect(mgr)
-
-        val savedPort = prefs.getInt("connect_port", -1)
-        val savedHost = savedHost()
-        if (savedPort in 1..65535) {
-            val connected = runCatching { mgr.connect(savedHost, savedPort) }.getOrDefault(false)
-            if ((connected || mgr.isConnected) && probeConnection(mgr)) return true
-            forceDisconnect(mgr)
+        if ((auto || mgr.isConnected) && probeConnection(mgr)) {
+            recordConnection(mgr.hostAddress, -1, "libadb-auto")
+            return true
         }
+        forceDisconnect(mgr)
         return false
+    }
+
+    private fun tryConnectAndProbe(
+        mgr: AbsAdbConnectionManager,
+        host: String,
+        port: Int,
+        route: String,
+    ): Boolean {
+        forceDisconnect(mgr)
+        val connected = runCatching { mgr.connect(host, port) }.getOrDefault(false)
+        if (!(connected || mgr.isConnected)) return false
+        if (!probeConnection(mgr)) {
+            forceDisconnect(mgr)
+            return false
+        }
+        recordConnection(host, port, route)
+        return true
     }
 
     private fun probeConnection(mgr: AbsAdbConnectionManager): Boolean = runCatching {
         rawRunCommand(mgr, "echo QUESTGPT_ADB_OK").contains("QUESTGPT_ADB_OK")
     }.getOrDefault(false)
 
+    /**
+     * Do not use one-shot destinations such as shell:echo ... for health checks.
+     * On Quest they can finish before openInputStream() attaches, which surfaces as "Stream closed".
+     * Open a persistent shell service first, attach both streams, then execute the command and wait for a marker.
+     */
     private fun rawRunCommand(mgr: AbsAdbConnectionManager, clean: String): String {
-        val stream = mgr.openStream("shell:$clean")
+        val stream = mgr.openStream(LocalServices.SHELL)
+        val marker = "__QUESTGPT_DONE_${System.nanoTime()}__"
         return try {
-            BufferedReader(InputStreamReader(stream.openInputStream())).use { reader ->
-                buildString {
-                    var line: String?
-                    while (true) {
-                        line = reader.readLine() ?: break
-                        append(line).append('\n')
-                    }
-                }.trimEnd().ifBlank { "(polecenie zakończone bez tekstowego wyniku)" }
+            val reader = BufferedReader(InputStreamReader(stream.openInputStream(), Charsets.UTF_8))
+            val output = stream.openOutputStream()
+            val script = buildString {
+                append(clean).append('\n')
+                append("printf '\\n$marker:%s\\n' \"\\$?\"\n")
             }
+            output.write(script.toByteArray(Charsets.UTF_8))
+            output.flush()
+
+            val text = StringBuilder()
+            var markerSeen = false
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.startsWith("$marker:")) {
+                    markerSeen = true
+                    break
+                }
+                text.append(line).append('\n')
+            }
+            check(markerSeen) { "ADB shell zamknął strumień przed potwierdzeniem wykonania polecenia." }
+            text.toString().trimEnd().ifBlank { "(polecenie zakończone bez tekstowego wyniku)" }
         } finally {
             runCatching { stream.close() }
         }
     }
 
     private fun captureScreenshotOnce(mgr: AbsAdbConnectionManager): ByteArray {
-        val fromBase64 = runCatching {
-            val stream = mgr.openStream("shell:screencap -p | base64")
-            try {
-                val encoded = stream.openInputStream().bufferedReader(Charsets.US_ASCII).use { it.readText() }
-                val compact = encoded.filterNot(Char::isWhitespace)
-                Base64.decode(compact, Base64.DEFAULT)
-            } finally {
-                runCatching { stream.close() }
-            }
-        }.getOrNull()
-        if (fromBase64 != null && isPng(fromBase64)) return fromBase64
-
-        val stream = mgr.openStream("exec:screencap -p")
-        val raw = try {
-            stream.openInputStream().use { it.readBytes() }
-        } finally {
-            runCatching { stream.close() }
-        }
-        check(isPng(raw)) { "ADB zwróciło dane, ale nie jest to prawidłowy screenshot PNG." }
+        val path = "/sdcard/questgpt-${System.nanoTime()}.png"
+        val encoded = rawRunCommand(
+            mgr,
+            "screencap -p $path && (base64 $path 2>/dev/null || toybox base64 $path); rm -f $path"
+        )
+        val compact = encoded.filterNot(Char::isWhitespace)
+        val raw = runCatching { Base64.decode(compact, Base64.DEFAULT) }
+            .getOrElse { error("Nie udało się zdekodować screencap z ADB: ${it.message}") }
+        check(isPng(raw)) { "ADB shell działa, ale screencap nie zwrócił prawidłowego PNG." }
         return raw
     }
 
@@ -340,20 +382,22 @@ class WirelessAdbController(context: Context) {
         val port = AtomicInteger(-1)
         val latch = CountDownLatch(1)
         val mdns = AdbMdns(appContext, serviceType) { address, discoveredPort ->
-            if (address != null && discoveredPort > 0) {
+            if (address != null && discoveredPort > 0 && isAddressOwnedByThisDevice(address)) {
                 host.set(address.hostAddress)
                 port.set(discoveredPort)
+                latch.countDown()
             }
-            latch.countDown()
         }
         mdns.start()
         try {
             if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
-                error(if (serviceType == AdbMdns.SERVICE_TYPE_TLS_PAIRING) {
-                    "Nie znaleziono portu parowania. Zostaw otwarte okno „Paruj urządzenie kodem” w ustawieniach Questa."
-                } else {
-                    "Nie znaleziono aktualnego portu połączenia Wireless ADB przez mDNS."
-                })
+                error(
+                    if (serviceType == AdbMdns.SERVICE_TYPE_TLS_PAIRING) {
+                        "Nie znaleziono portu parowania tego Questa. Zostaw otwarte „Paruj urządzenie kodem”."
+                    } else {
+                        "Nie znaleziono własnego portu TLS_CONNECT tego Questa przez mDNS."
+                    }
+                )
             }
         } finally {
             mdns.stop()
@@ -363,8 +407,41 @@ class WirelessAdbController(context: Context) {
         return result
     }
 
+    private fun isAddressOwnedByThisDevice(address: InetAddress): Boolean {
+        if (address.isLoopbackAddress) return true
+        val target = normalizeAddress(address.hostAddress)
+        if (target == normalizeAddress(localHostAddress())) return true
+        return runCatching {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return@runCatching false
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                val addresses = iface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    if (normalizeAddress(addresses.nextElement().hostAddress) == target) return@runCatching true
+                }
+            }
+            false
+        }.getOrDefault(false)
+    }
+
+    private fun isSelfHost(host: String): Boolean =
+        isLoopback(host) || normalizeAddress(host) == normalizeAddress(localHostAddress())
+
+    private fun isLoopback(host: String): Boolean =
+        host == LOOPBACK || host == "::1" || host.equals("localhost", ignoreCase = true)
+
+    private fun normalizeAddress(value: String): String = value.substringBefore('%').trim().lowercase()
+
     private fun forceDisconnect(mgr: AbsAdbConnectionManager) {
-        runCatching { if (mgr.isConnected) mgr.disconnect() }
+        runCatching { mgr.disconnect() }
+    }
+
+    private fun recordConnection(host: String, port: Int, route: String) {
+        prefs.edit().apply {
+            putString("last_route", route)
+            putString("last_connect_host", host)
+            if (port > 0) putInt("last_connect_port", port) else remove("last_connect_port")
+        }.apply()
     }
 
     private fun validateDownloadApkPath(path: String): String {
@@ -400,5 +477,9 @@ class WirelessAdbController(context: Context) {
             pairPort?.let { putInt("pair_port", it) }
             connectPort?.let { putInt("connect_port", it) }
         }.apply()
+    }
+
+    companion object {
+        private const val LOOPBACK = "127.0.0.1"
     }
 }

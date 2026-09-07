@@ -24,7 +24,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
 import org.json.JSONObject
+import pl.somaskan.questgpt.adb.AdbVisionCapture
 
 class RealtimeVoiceClient(
     private val context: Context,
@@ -39,6 +41,7 @@ class RealtimeVoiceClient(
     private var player: AudioTrack? = null
     private var scope: CoroutineScope? = null
     private var recordJob: Job? = null
+    @Volatile private var lastVisionSentAt = 0L
 
     fun start(baseUrl: String) {
         if (socket != null) return
@@ -92,6 +95,7 @@ class RealtimeVoiceClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 onState("Połączono z OpenAI — mów")
                 configureSession(webSocket)
+                refreshVisionContext(webSocket, force = true)
                 startAudio(webSocket)
             }
 
@@ -105,6 +109,7 @@ class RealtimeVoiceClient(
                         }
                         "response.output_audio_transcript.delta" -> onAssistantDelta(json.optString("delta"))
                         "conversation.item.input_audio_transcription.completed" -> onUserTranscript(json.optString("transcript"))
+                        "input_audio_buffer.speech_started" -> refreshVisionContext(webSocket)
                         "error" -> onError(json.optJSONObject("error")?.optString("message") ?: "Realtime error")
                     }
                 }.onFailure { onError(it.message ?: "Błąd Realtime") }
@@ -121,13 +126,42 @@ class RealtimeVoiceClient(
         })
     }
 
+    private fun refreshVisionContext(webSocket: WebSocket, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastVisionSentAt < 2_000L) return
+        lastVisionSentAt = now
+        scope?.launch {
+            val image = AdbVisionCapture.captureDataUrlIfAvailable(autoConnectIfNeeded = false)
+                ?: return@launch
+            val event = JSONObject().apply {
+                put("type", "conversation.item.create")
+                put("item", JSONObject().apply {
+                    put("type", "message")
+                    put("role", "user")
+                    put("content", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("type", "input_text")
+                            put("text", "To jest aktualny widok użytkownika na Meta Quest 3. Użyj go jako kontekstu bieżącej wypowiedzi.")
+                        })
+                        put(JSONObject().apply {
+                            put("type", "input_image")
+                            put("image_url", image)
+                            put("detail", "auto")
+                        })
+                    })
+                })
+            }
+            webSocket.send(event.toString())
+        }
+    }
+
     private fun configureSession(webSocket: WebSocket) {
         val event = JSONObject().apply {
             put("type", "session.update")
             put("session", JSONObject().apply {
                 put("type", "realtime")
-                put("instructions", "Odpowiadaj naturalnie i krótko. Używaj języka użytkownika.")
-                put("output_modalities", org.json.JSONArray().put("audio"))
+                put("instructions", "Odpowiadaj naturalnie i krótko. Używaj języka użytkownika. Jeżeli w kontekście rozmowy pojawia się obraz ekranu Meta Quest 3, traktuj go jako aktualny widok użytkownika.")
+                put("output_modalities", JSONArray().put("audio"))
                 put("audio", JSONObject().apply {
                     put("input", JSONObject().apply {
                         put("format", JSONObject().put("type", "audio/pcm").put("rate", 24000))
@@ -212,6 +246,7 @@ class RealtimeVoiceClient(
         socket = null
         scope?.cancel()
         scope = null
+        lastVisionSentAt = 0L
         onState("Głos wyłączony")
     }
 }

@@ -36,9 +36,14 @@ object AdbVisionMonitor {
                 }
                 val controller = WirelessAdbController(context)
                 if (!controller.isConnected()) {
-                    QuestAgentRuntime.visionStatus = "ADB Vision: ADB rozłączone"
-                    delay(2_000L)
-                    continue
+                    QuestAgentRuntime.visionStatus = "ADB Vision: ponowne łączenie ADB..."
+                    val reconnected = runCatching { controller.autoConnect(timeoutMs = 3_000L) }.getOrDefault(false)
+                    if (!reconnected) {
+                        QuestAgentRuntime.visionStatus = "ADB Vision: ADB rozłączone • ponowię automatycznie"
+                        delay(5_000L)
+                        continue
+                    }
+                    QuestAgentRuntime.visionStatus = "ADB Vision: ADB połączone ponownie"
                 }
                 val previousHash = latestFrame?.hash
                 val frame = captureNow()

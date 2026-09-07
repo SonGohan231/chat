@@ -17,21 +17,28 @@ class OpenAIBackend(private val http: OkHttpClient = OkHttpClient()) {
         imageDataUrl: String?,
         previousResponseId: String?
     ): Reply = withContext(Dispatchers.IO) {
+        val backend = QuestEndpoints.resolveBackend(baseUrl)
         val body = JSONObject().apply {
             put("text", text)
             if (imageDataUrl != null) put("imageDataUrl", imageDataUrl)
             if (previousResponseId != null) put("previousResponseId", previousResponseId)
         }
         val request = Request.Builder()
-            .url(baseUrl.trimEnd('/') + "/api/respond")
+            .url(backend + "/api/respond")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error("Backend ${response.code}: $raw")
+            if (!response.isSuccessful) {
+                val message = runCatching { JSONObject(raw).optString("error") }.getOrNull().orEmpty()
+                error(if (message.isNotBlank()) message else "OpenAI backend ${response.code}: $raw")
+            }
             val json = JSONObject(raw)
-            Reply(json.optString("text", ""), json.optString("responseId").takeIf { it.isNotBlank() })
+            Reply(
+                json.optString("text", ""),
+                json.optString("responseId").takeIf { it.isNotBlank() }
+            )
         }
     }
 }

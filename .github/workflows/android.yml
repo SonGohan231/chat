@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main, questgpt-live-edit-v3]
+    branches: [main, questgpt-live-edit-v3, questgpt-wireless-adb-v1]
   workflow_dispatch:
 
 permissions:

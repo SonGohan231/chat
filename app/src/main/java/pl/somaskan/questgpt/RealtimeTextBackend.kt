@@ -124,22 +124,9 @@ class RealtimeTextBackend(
         withTimeout(CONNECT_TIMEOUT_MS) { deferred.await() }
     }
 
-    private fun fetchCredential(backend: String): Credential {
-        val request = Request.Builder()
-            .url("$backend/api/realtime-token?mode=text")
-            .get()
-            .build()
-        http.newCall(request).execute().use { response ->
-            val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                val message = runCatching { JSONObject(raw).optString("error") }.getOrNull().orEmpty()
-                error(if (message.isNotBlank()) message else "Realtime token ${response.code}: ${raw.take(800)}")
-            }
-            val json = JSONObject(raw)
-            val token = json.optString("value")
-            check(token.isNotBlank()) { "Backend nie zwrócił krótkotrwałego tokenu Realtime" }
-            return Credential(token, json.optString("model", "gpt-realtime"))
-        }
+    private suspend fun fetchCredential(backend: String): Credential {
+        val credential = RealtimeCredentialProvider.fetch(backend, "text")
+        return Credential(credential.token, credential.model)
     }
 
     private fun configureSession(webSocket: WebSocket) {

@@ -1,7 +1,10 @@
 package pl.somaskan.questgpt.ui
 
+import android.Manifest
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -21,14 +24,31 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun WorldVisionStatusCard(
-    permissionGranted: Boolean,
-    onRequestPermission: () -> Unit,
-    compact: Boolean = false,
-) {
+fun WorldVisionStatusCard(compact: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val camera = remember { PassthroughCameraCapture(context.applicationContext) }
+    var permissionGranted by remember { mutableStateOf(camera.hasPermission()) }
     var showPreview by remember { mutableStateOf(false) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        permissionGranted = camera.hasPermission()
+        if (permissionGranted) WorldVisionManager.setEnabled(context, true)
+        else {
+            WorldVisionRuntime.lastError = "Nie przyznano CAMERA i HEADSET_CAMERA."
+            WorldVisionRuntime.status = "World Vision: brak uprawnień"
+        }
+    }
+
+    val requestPermission = {
+        permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA, PassthroughCameraCapture.HEADSET_CAMERA_PERMISSION))
+    }
+
+    LaunchedEffect(Unit) {
+        WorldVisionManager.refreshRuntime(context)
+        permissionGranted = camera.hasPermission()
+    }
+
     val preview = WorldVisionRuntime.lastPreviewDataUrl
     val previewBitmap = remember(preview, showPreview) {
         if (!showPreview || preview.isNullOrBlank()) null else runCatching {
@@ -53,18 +73,18 @@ fun WorldVisionStatusCard(
                 Switch(
                     checked = WorldVisionRuntime.enabled,
                     onCheckedChange = { enabled ->
-                        if (enabled && !permissionGranted) onRequestPermission()
+                        if (enabled && !permissionGranted) requestPermission()
                         else WorldVisionManager.setEnabled(context, enabled)
                     },
                 )
                 Column(Modifier.weight(1f)) {
                     Text("Dołączaj świat do GPT", fontWeight = FontWeight.SemiBold)
-                    if (!compact) Text("W głosie: przy rozpoczęciu wypowiedzi. W chacie: przy zwykłych turach bez ręcznie dołączonego zdjęcia.", style = MaterialTheme.typography.bodySmall)
+                    if (!compact) Text("Przy każdej obserwacji agenta GPT dostaje ekran Questa oraz świeżą klatkę fizycznego świata.", style = MaterialTheme.typography.bodySmall)
                 }
             }
 
             if (!permissionGranted) {
-                FilledTonalButton(onClick = onRequestPermission, modifier = Modifier.fillMaxWidth()) {
+                FilledTonalButton(onClick = requestPermission, modifier = Modifier.fillMaxWidth()) {
                     Text("Zezwól na kamerę passthrough")
                 }
             } else {

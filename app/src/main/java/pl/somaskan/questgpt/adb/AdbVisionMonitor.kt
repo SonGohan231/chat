@@ -78,8 +78,8 @@ object AdbVisionMonitor {
     suspend fun latestOrCapture(maxAgeMs: Long = 1_200L): AdbVisionFrame? {
         val now = System.currentTimeMillis()
         val current = latestFrame
-        if (current != null && now - current.capturedAt <= maxAgeMs) return current
-        return captureNow()
+        val screenFrame = if (current != null && now - current.capturedAt <= maxAgeMs) current else captureNow()
+        return screenFrame?.let { VisionFrameEnricher.withWorldIfEnabled(it) }
     }
 
     suspend fun captureNow(): AdbVisionFrame? = captureMutex.withLock {

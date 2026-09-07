@@ -1,10 +1,13 @@
 package pl.somaskan.questgpt.adb
 
+import android.content.Intent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
+import pl.somaskan.questgpt.AgentConfirmationActivity
+import pl.somaskan.questgpt.QuestApp
 import java.util.UUID
 
 data class PendingAgentConfirmation(
@@ -20,19 +23,8 @@ object AgentConfirmationCenter {
 
     var pending by mutableStateOf<PendingAgentConfirmation?>(null)
         private set
-    var uiAvailable by mutableStateOf(false)
-        private set
-
-    fun setUiAvailable(available: Boolean) {
-        uiAvailable = available
-        if (!available) deny()
-    }
 
     suspend fun request(title: String, details: String): Boolean {
-        if (!uiAvailable) {
-            QuestAgentRuntime.lastError = "Ta akcja wymaga potwierdzenia w otwartym panelu QuestGPT."
-            return false
-        }
         val deferred = CompletableDeferred<Boolean>()
         synchronized(lock) {
             if (waiter != null) {
@@ -43,6 +35,19 @@ object AgentConfirmationCenter {
             pending = PendingAgentConfirmation(UUID.randomUUID().toString(), title, details)
         }
         QuestAgentRuntime.confirmationStatus = "Oczekuje na potwierdzenie: $title"
+
+        val opened = runCatching {
+            QuestApp.appContext.startActivity(
+                Intent(QuestApp.appContext, AgentConfirmationActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            )
+        }.isSuccess
+        if (!opened) {
+            deny()
+            QuestAgentRuntime.lastError = "Nie udało się otworzyć panelu potwierdzenia."
+            return false
+        }
+
         val approved = withTimeoutOrNull(30_000L) { deferred.await() } ?: false
         synchronized(lock) {
             if (waiter === deferred) {

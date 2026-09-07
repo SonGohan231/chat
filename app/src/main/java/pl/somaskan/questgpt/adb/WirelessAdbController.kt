@@ -335,7 +335,7 @@ class WirelessAdbController(context: Context) {
         return raw
     }
 
-    private fun discoverEndpointBlocking(serviceType: Int, timeoutMs: Long): AdbEndpoint {
+    private fun discoverEndpointBlocking(serviceType: String, timeoutMs: Long): AdbEndpoint {
         val host = AtomicReference<String?>(null)
         val port = AtomicInteger(-1)
         val latch = CountDownLatch(1)

@@ -34,7 +34,10 @@ fun AdbVisionStatusCard(compact: Boolean = false) {
     val frameTime = if (QuestAgentRuntime.lastFrameAt > 0L) timeFormat.format(Date(QuestAgentRuntime.lastFrameAt)) else "—"
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (!compact) AgentControlSettings()
+        if (!compact) {
+            StartupConversationSettingsCard()
+            AgentControlSettings()
+        }
 
         ElevatedCard(Modifier.fillMaxWidth()) {
             Column(

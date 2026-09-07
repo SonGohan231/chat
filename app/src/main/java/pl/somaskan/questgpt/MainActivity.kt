@@ -25,8 +25,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -51,11 +53,14 @@ class MainActivity : ComponentActivity() {
     private val boards = mutableStateListOf<Board>()
     private var previousResponseId: String? = null
     private var selectedBoardId by mutableStateOf("")
-    private var backendUrl by mutableStateOf("")
     private var busy by mutableStateOf(false)
     private var voiceState by mutableStateOf("Głos wyłączony")
     private var assistantVoiceDraft by mutableStateOf("")
     private var currentScreen by mutableStateOf(AppScreen.CHAT)
+
+    private var openAIConfigured by mutableStateOf(false)
+    private var textModel by mutableStateOf(OpenAICredentialStore.DEFAULT_TEXT_MODEL)
+    private var realtimeModel by mutableStateOf(OpenAICredentialStore.DEFAULT_REALTIME_MODEL)
 
     private var visionImageDataUrl by mutableStateOf<String?>(null)
     private var imageTarget = ImageTarget.CHAT
@@ -85,6 +90,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var boardStore: BoardStore
     private lateinit var updateClient: UpdateClient
     private lateinit var updateManager: UpdateManager
+    private lateinit var openAIStore: OpenAICredentialStore
 
     private enum class ImageTarget { CHAT, VISION, SKETCH }
     private enum class CaptureTarget { CHAT, VISION, SKETCH }
@@ -193,7 +199,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("questgpt", MODE_PRIVATE)
-        backendUrl = prefs.getString("backend", "http://10.0.2.2:8787") ?: "http://10.0.2.2:8787"
         folderLabel = prefs.getString("folder", null)?.let { Uri.parse(it).lastPathSegment } ?: "nie wybrano"
         localLiveOverride = prefs.getBoolean("live_override_enabled", false)
         if (localLiveOverride) {
@@ -202,6 +207,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        openAIStore = OpenAICredentialStore(applicationContext)
+        refreshOpenAIState()
         files = FileWorkspace(applicationContext)
         boardStore = BoardStore(applicationContext)
         updateClient = UpdateClient(applicationContext)
@@ -228,7 +235,10 @@ class MainActivity : ComponentActivity() {
                 }
             } },
             onState = { state -> runOnUiThread { voiceState = state } },
-            onError = { error -> runOnUiThread { addSystemMessage(error) } }
+            onError = { error -> runOnUiThread {
+                voiceState = error
+                addSystemMessage("GPT Live: $error")
+            } }
         )
 
         setContent {
@@ -237,7 +247,7 @@ class MainActivity : ComponentActivity() {
                     MultiBoardShell(currentScreen, { currentScreen = it }) {
                         when (currentScreen) {
                             AppScreen.CHAT -> ChatScreen()
-                            AppScreen.VOICE -> VoiceScreen(voiceState, ::toggleVoice)
+                            AppScreen.VOICE -> VoiceScreen(voiceState, openAIConfigured, ::toggleVoice)
                             AppScreen.VISION -> VisionScreen(
                                 imageDataUrl = visionImageDataUrl,
                                 busy = busy,
@@ -247,9 +257,7 @@ class MainActivity : ComponentActivity() {
                                     pickImage.launch("image/*")
                                 },
                                 onScreenshot = { requestScreenshot(CaptureTarget.VISION) },
-                                onAnalyze = { prompt ->
-                                    visionImageDataUrl?.let { sendMessage(prompt, it) }
-                                },
+                                onAnalyze = { prompt -> visionImageDataUrl?.let { sendMessage(prompt, it) } },
                                 onOpenSketch = { currentScreen = AppScreen.SKETCH }
                             )
                             AppScreen.SKETCH -> SketchScreen(
@@ -300,14 +308,17 @@ class MainActivity : ComponentActivity() {
                                 ::installPendingUpdate
                             )
                             AppScreen.SETTINGS -> SettingsScreen(
-                                backendUrl,
-                                { backendUrl = it; prefs.edit().putString("backend", it).apply() },
-                                hasPermission(Manifest.permission.RECORD_AUDIO),
-                                Build.VERSION.SDK_INT < 33 || hasPermission(Manifest.permission.POST_NOTIFICATIONS),
-                                updateManager.canRequestPackageInstalls(),
-                                { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
-                                ::requestNotifications,
-                                ::openInstallPermission,
+                                openAIConfigured = openAIConfigured,
+                                textModel = textModel,
+                                realtimeModel = realtimeModel,
+                                onSaveOpenAI = ::saveOpenAISettings,
+                                onClearOpenAI = ::clearOpenAIKey,
+                                micGranted = hasPermission(Manifest.permission.RECORD_AUDIO),
+                                notificationsGranted = Build.VERSION.SDK_INT < 33 || hasPermission(Manifest.permission.POST_NOTIFICATIONS),
+                                installGranted = updateManager.canRequestPackageInstalls(),
+                                onMicPermission = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
+                                onNotificationPermission = ::requestNotifications,
+                                onInstallPermission = ::openInstallPermission,
                             )
                         }
                     }
@@ -335,42 +346,75 @@ class MainActivity : ComponentActivity() {
         val boardName = boards.firstOrNull { it.id == selectedBoardId }?.name ?: "Rozmowa"
         LaunchedEffect(messages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
 
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
-                    Text(liveConfig.title, style = MaterialTheme.typography.headlineSmall)
+                    Text(liveConfig.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text("$boardName • ${liveConfig.subtitle}", style = MaterialTheme.typography.bodySmall)
                 }
-                AssistChip(onClick = { currentScreen = AppScreen.LIVE }, label = { Text(if (busy) "Przetwarzanie" else "Gotowy") })
+                SuggestionChip(
+                    onClick = { if (!openAIConfigured) currentScreen = AppScreen.SETTINGS },
+                    label = {
+                        Text(
+                            when {
+                                busy -> "OpenAI • odpowiada…"
+                                openAIConfigured -> "OpenAI • gotowy"
+                                else -> "Skonfiguruj OpenAI"
+                            }
+                        )
+                    }
+                )
             }
 
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 liveConfig.quickActions.forEach { action ->
-                    AssistChip(onClick = { if (!busy) sendMessage(action, null) }, enabled = !busy, label = { Text(action) })
+                    AssistChip(
+                        onClick = { if (!busy && openAIConfigured) sendMessage(action, null) },
+                        enabled = !busy && openAIConfigured,
+                        label = { Text(action) }
+                    )
                 }
             }
 
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(messages) { line ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(
-                                if (line.role == "user") "Ty" else if (line.role.startsWith("assistant")) "GPT" else "System",
-                                style = MaterialTheme.typography.labelSmall
+                    val isUser = line.role == "user"
+                    val isAssistant = line.role.startsWith("assistant")
+                    Box(Modifier.fillMaxWidth()) {
+                        Card(
+                            modifier = Modifier
+                                .widthIn(max = if (line.role == "system") 760.dp else 720.dp)
+                                .align(if (isUser) Alignment.CenterEnd else Alignment.CenterStart),
+                            colors = CardDefaults.cardColors(
+                                containerColor = when {
+                                    isUser -> MaterialTheme.colorScheme.primaryContainer
+                                    isAssistant -> MaterialTheme.colorScheme.surfaceVariant
+                                    else -> MaterialTheme.colorScheme.errorContainer
+                                }
                             )
-                            Text(line.text)
+                        ) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
+                                Text(
+                                    if (isUser) "Ty" else if (isAssistant) "GPT" else "System",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(line.text, style = MaterialTheme.typography.bodyLarge)
+                            }
                         }
                     }
                 }
             }
 
             OutlinedTextField(
-                draft,
-                { draft = it },
-                label = { Text("Napisz wiadomość") },
+                value = draft,
+                onValueChange = { draft = it },
+                label = { Text(if (openAIConfigured) "Napisz wiadomość" else "Najpierw skonfiguruj OpenAI") },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !busy,
-                minLines = 2
+                enabled = !busy && openAIConfigured,
+                minLines = 2,
+                maxLines = 5,
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -381,37 +425,93 @@ class MainActivity : ComponentActivity() {
                             sendMessage(text, null)
                         }
                     },
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Wyślij") }
-                OutlinedButton(onClick = { currentScreen = AppScreen.VOICE }, modifier = Modifier.weight(1f)) { Text("Mikrofon") }
-                OutlinedButton(onClick = {
-                    imageTarget = ImageTarget.CHAT
-                    pickImage.launch("image/*")
-                }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("Zdjęcie") }
-                OutlinedButton(onClick = { requestScreenshot(CaptureTarget.CHAT) }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("Screenshot") }
+                    enabled = !busy && openAIConfigured && draft.isNotBlank(),
+                    modifier = Modifier.weight(1f).heightIn(min = 52.dp)
+                ) { Text(if (busy) "Czekaj…" else "Wyślij") }
+                FilledTonalButton(
+                    onClick = {
+                        currentScreen = AppScreen.VOICE
+                        toggleVoice()
+                    },
+                    enabled = openAIConfigured && !busy,
+                    modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                ) { Text("Mikrofon") }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        imageTarget = ImageTarget.CHAT
+                        pickImage.launch("image/*")
+                    },
+                    enabled = !busy && openAIConfigured,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Zdjęcie") }
+                OutlinedButton(
+                    onClick = { requestScreenshot(CaptureTarget.CHAT) },
+                    enabled = !busy && openAIConfigured,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Screenshot") }
+                if (!openAIConfigured) {
+                    Button(onClick = { currentScreen = AppScreen.SETTINGS }, modifier = Modifier.weight(1f)) { Text("Ustaw OpenAI") }
+                }
             }
         }
     }
 
     private fun sendMessage(text: String, imageDataUrl: String?) {
-        if (backendUrl.isBlank()) {
-            addSystemMessage("Ustaw Backend URL")
+        refreshOpenAIState()
+        if (!openAIConfigured) {
+            addSystemMessage("Brak klucza OpenAI API. Otwórz Ustawienia > OpenAI, zapisz klucz i uruchom diagnostykę.")
+            currentScreen = AppScreen.SETTINGS
             return
         }
+        if (busy) return
         messages += ChatLine("user", if (imageDataUrl == null) text else "$text [obraz]")
         saveCurrentSession()
         busy = true
         uiScope.launch {
-            runCatching { backend.respond(backendUrl, text, imageDataUrl, previousResponseId) }
+            runCatching { backend.respond(text, imageDataUrl, previousResponseId) }
                 .onSuccess {
                     previousResponseId = it.responseId
                     messages += ChatLine("assistant", it.text)
                     saveCurrentSession()
                 }
-                .onFailure { addSystemMessage(it.message ?: "Błąd") }
+                .onFailure {
+                    addSystemMessage(it.message ?: "Błąd połączenia z OpenAI")
+                }
             busy = false
         }
+    }
+
+    private fun saveOpenAISettings(apiKey: String, newTextModel: String, newRealtimeModel: String) {
+        runCatching {
+            if (apiKey.isNotBlank()) openAIStore.saveKey(apiKey)
+            check(openAIStore.hasKey()) { "Najpierw podaj klucz OpenAI API." }
+            openAIStore.saveModels(newTextModel, newRealtimeModel)
+        }.onSuccess {
+            previousResponseId = null
+            refreshOpenAIState()
+            addSystemMessage("Ustawienia OpenAI zapisane. Uruchom „Testuj wszystko”, aby sprawdzić klucz i oba modele.")
+        }.onFailure {
+            addSystemMessage("OpenAI: ${it.message ?: "nie udało się zapisać ustawień"}")
+        }
+    }
+
+    private fun clearOpenAIKey() {
+        VoiceAgentController.stop(applicationContext)
+        openAIStore.clearKey()
+        previousResponseId = null
+        refreshOpenAIState()
+        voiceState = "Głos wyłączony"
+        addSystemMessage("Klucz OpenAI API został usunięty z lokalnego magazynu Questa.")
+    }
+
+    private fun refreshOpenAIState() {
+        if (!::openAIStore.isInitialized) return
+        val settings = openAIStore.settings()
+        openAIConfigured = settings.configured
+        textModel = settings.textModel
+        realtimeModel = settings.realtimeModel
     }
 
     private fun addSystemMessage(text: String) {
@@ -637,21 +737,36 @@ class MainActivity : ComponentActivity() {
     private fun openInstallPermission() { startActivity(updateManager.buildUnknownSourcesIntent()) }
 
     private fun toggleVoice() {
-        if (voiceState.startsWith("Połączono")) {
+        refreshOpenAIState()
+        if (VoiceAgentRuntime.desiredRunning || voiceState.startsWith("Połączono") || voiceState.startsWith("Łączenie") || voiceState.startsWith("Ponowne")) {
+            VoiceAgentController.stop(applicationContext)
             voice.stop()
             assistantVoiceDraft = ""
+            voiceState = "Głos wyłączony"
             return
         }
-        if (!hasPermission(Manifest.permission.RECORD_AUDIO)) micPermission.launch(Manifest.permission.RECORD_AUDIO) else startVoice()
+        if (!openAIConfigured) {
+            voiceState = "Brak klucza OpenAI API"
+            addSystemMessage("GPT Live wymaga klucza OpenAI API. Otwórz Ustawienia > OpenAI.")
+            return
+        }
+        if (!hasPermission(Manifest.permission.RECORD_AUDIO)) {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            startVoice()
+        }
     }
 
     private fun startVoice(initialPrompt: String? = null) {
-        if (backendUrl.isBlank()) {
-            addSystemMessage("Ustaw Backend URL")
+        refreshOpenAIState()
+        if (!openAIConfigured) {
+            voiceState = "Brak klucza OpenAI API"
+            addSystemMessage("GPT Live wymaga konfiguracji OpenAI.")
             return
         }
+        currentScreen = AppScreen.VOICE
         assistantVoiceDraft = ""
-        voice.start(backendUrl, initialPrompt)
+        voice.start(initialPrompt)
     }
 
     private fun scheduleStartupConversation() {
@@ -666,14 +781,21 @@ class MainActivity : ComponentActivity() {
         if (startupGuideRunning || !StartupConversationGuide.isEnabled(this) || !StartupConversationGuide.canStartNow(this)) return
         startupGuideRunning = true
         StartupConversationGuide.markStarted(this)
-        AgentServiceController.startIfEnabled(applicationContext)
-
-        val controller = WirelessAdbController(applicationContext)
-        val adbConnected = if (controller.isConnected()) {
-            true
-        } else {
-            runCatching { controller.autoConnect(3_500L) }.getOrDefault(false)
+        refreshOpenAIState()
+        if (!openAIConfigured) {
+            currentScreen = AppScreen.CHAT
+            messages += ChatLine(
+                "assistant",
+                "QuestGPT jest gotowy, ale nie ma jeszcze dostępu do OpenAI. Otwórz Ustawienia > OpenAI, wklej własny klucz API i wybierz „Testuj wszystko”. Potem czat i GPT Live będą łączyć się bezpośrednio z OpenAI — bez AppDeploy."
+            )
+            saveCurrentSession()
+            startupGuideRunning = false
+            return
         }
+
+        AgentServiceController.startIfEnabled(applicationContext)
+        val controller = WirelessAdbController(applicationContext)
+        val adbConnected = if (controller.isConnected()) true else runCatching { controller.autoConnect(3_500L) }.getOrDefault(false)
         val fullGuide = StartupConversationGuide.needsFullGuide(this)
         val micGranted = hasPermission(Manifest.permission.RECORD_AUDIO)
         val notificationsGranted = Build.VERSION.SDK_INT < 33 || hasPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -696,10 +818,7 @@ class MainActivity : ComponentActivity() {
             StartupConversationGuide.shouldAutoRequestMic(this) -> {
                 pendingStartupPrompt = prompt
                 currentScreen = AppScreen.CHAT
-                messages += ChatLine(
-                    "assistant",
-                    "Cześć. QuestGPT uruchomił przewodnik startowy. Najpierw zezwól na mikrofon — wtedy zacznę mówić i przeprowadzę Cię przez ADB Vision, sterowanie, uprawnienia i pozostałe funkcje."
-                )
+                messages += ChatLine("assistant", "QuestGPT jest połączony z OpenAI. Zezwól na mikrofon, aby uruchomić GPT Live.")
                 saveCurrentSession()
                 StartupConversationGuide.markMicRequested(this)
                 micPermission.launch(Manifest.permission.RECORD_AUDIO)
@@ -713,23 +832,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startTextStartupGuide(prompt: String) {
-        if (backendUrl.isBlank() || busy) return
+        refreshOpenAIState()
+        if (!openAIConfigured || busy) return
         busy = true
         uiScope.launch {
-            runCatching { backend.respond(backendUrl, prompt, null, previousResponseId) }
+            runCatching { backend.respond(prompt, null, previousResponseId) }
                 .onSuccess {
                     previousResponseId = it.responseId
                     messages += ChatLine("assistant", it.text.ifBlank { "QuestGPT jest uruchomiony. Włącz mikrofon w Ustawieniach, aby przejść do rozmowy głosowej." })
                     saveCurrentSession()
                 }
-                .onFailure {
-                    messages += ChatLine(
-                        "assistant",
-                        "QuestGPT jest uruchomiony. Mikrofon nie jest dostępny, więc działam tekstowo. Wejdź w Ustawienia > OpenAI i uprawnienia, włącz mikrofon, a następnie Ustawienia > ADB + Agent, aby skonfigurować widzenie i sterowanie."
-                    )
-                    saveCurrentSession()
-                    addSystemMessage("Przewodnik startowy: ${it.message ?: "błąd połączenia"}")
-                }
+                .onFailure { addSystemMessage("Przewodnik startowy: ${it.message ?: "błąd połączenia"}") }
             busy = false
         }
     }

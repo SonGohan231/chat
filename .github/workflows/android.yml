@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main, questgpt-live-edit-v3, questgpt-wireless-adb-v1, questgpt-agent-v22, questgpt-agent-service-v24, questgpt-startup-guide-v29, questgpt-persistent-voice-diagnostics-v31, questgpt-world-vision-v34, questgpt-native-realtime-fix-v37]
+    branches: [main, questgpt-live-edit-v3, questgpt-wireless-adb-v1, questgpt-agent-v22, questgpt-agent-service-v24, questgpt-startup-guide-v29, questgpt-persistent-voice-diagnostics-v31, questgpt-world-vision-v34, questgpt-native-realtime-fix-v37, questgpt-local-openai-v48]
   workflow_dispatch:
 
 permissions:
@@ -20,8 +20,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
+      - name: Test and build debug APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
       - name: Prepare APK
         run: cp app/build/outputs/apk/debug/app-debug.apk QuestGPT.apk
       - uses: actions/upload-artifact@v4

@@ -8,13 +8,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import pl.somaskan.questgpt.QuestEndpoints
 import pl.somaskan.questgpt.VoiceAgentController
 import pl.somaskan.questgpt.VoiceAgentRuntime
 
 @Composable
-fun VoiceScreen(state: String, onToggle: () -> Unit) {
+fun VoiceScreen(state: String, openAIConfigured: Boolean, onToggle: () -> Unit) {
     val context = LocalContext.current
     val backgroundActive = VoiceAgentRuntime.desiredRunning
     val effectiveState = if (backgroundActive) VoiceAgentRuntime.state else state
@@ -23,18 +23,26 @@ fun VoiceScreen(state: String, onToggle: () -> Unit) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("Rozmowa głosowa", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("GPT Live", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         ElevatedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(effectiveState, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "OpenAI Realtime może zostać przejęte przez osobną usługę mikrofonu po zamknięciu panelu QuestGPT. W tle usługa automatycznie ponawia połączenie po utracie sieci, a ADB Vision nadal dostarcza aktualny widok i narzędzia agenta.",
+                    if (!openAIConfigured) "Wymaga konfiguracji OpenAI" else effectiveState,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (!openAIConfigured || VoiceAgentRuntime.lastError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    if (openAIConfigured)
+                        "Mikrofon łączy się bezpośrednio z OpenAI Realtime. Po schowaniu panelu rozmowę utrzymuje usługa QuestGPT."
+                    else
+                        "Najpierw przejdź do Ustawienia > OpenAI i zapisz własny klucz API.",
                     style = MaterialTheme.typography.bodyLarge
                 )
                 if (VoiceAgentRuntime.reconnectAttempt > 0 && backgroundActive) {
                     Text("Próba ponownego połączenia: ${VoiceAgentRuntime.reconnectAttempt}", style = MaterialTheme.typography.bodyMedium)
                 }
-                VoiceAgentRuntime.lastError?.takeIf { backgroundActive }?.let {
+                VoiceAgentRuntime.lastError?.takeIf { backgroundActive || !openAIConfigured }?.let {
                     Text("Błąd: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                 }
             }
@@ -43,7 +51,7 @@ fun VoiceScreen(state: String, onToggle: () -> Unit) {
         if (backgroundActive && (VoiceAgentRuntime.lastUserTranscript.isNotBlank() || VoiceAgentRuntime.assistantTranscript.isNotBlank())) {
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Ostatnia rozmowa w tle", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Ostatnia rozmowa", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     VoiceAgentRuntime.lastUserTranscript.takeIf { it.isNotBlank() }?.let { Text("Ty: $it") }
                     VoiceAgentRuntime.assistantTranscript.takeIf { it.isNotBlank() }?.let { Text("GPT: $it") }
                 }
@@ -53,7 +61,8 @@ fun VoiceScreen(state: String, onToggle: () -> Unit) {
         AdbVisionStatusCard(compact = false)
         Button(
             onClick = { if (backgroundActive) VoiceAgentController.stop(context) else onToggle() },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
+            enabled = openAIConfigured || backgroundActive,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
         ) {
             Text(
                 if (backgroundActive || effectiveState.startsWith("Połączono") || effectiveState.startsWith("Ponowne łączenie") || effectiveState.startsWith("Łączenie"))
@@ -139,8 +148,11 @@ fun UpdatesScreen(
 
 @Composable
 fun SettingsScreen(
-    backendUrl: String,
-    onBackendUrl: (String) -> Unit,
+    openAIConfigured: Boolean,
+    textModel: String,
+    realtimeModel: String,
+    onSaveOpenAI: (String, String, String) -> Unit,
+    onClearOpenAI: () -> Unit,
     micGranted: Boolean,
     notificationsGranted: Boolean,
     installGranted: Boolean,
@@ -149,6 +161,9 @@ fun SettingsScreen(
     onInstallPermission: () -> Unit,
 ) {
     var section by remember { mutableStateOf(0) }
+    var apiKey by remember { mutableStateOf("") }
+    var textModelDraft by remember(textModel) { mutableStateOf(textModel) }
+    var realtimeModelDraft by remember(realtimeModel) { mutableStateOf(realtimeModel) }
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Ustawienia", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -174,7 +189,7 @@ fun SettingsScreen(
             ) {
                 AdbVisionStatusCard(compact = false)
                 WirelessAdbScreen(embedded = true)
-                DiagnosticsCard(backendUrl)
+                DiagnosticsCard()
                 Spacer(Modifier.height(18.dp))
             }
         } else {
@@ -183,24 +198,59 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 ElevatedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("OpenAI API", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("OpenAI — połączenie bezpośrednie", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            SuggestionChip(
+                                onClick = {},
+                                label = { Text(if (openAIConfigured) "Gotowe" else "Brak klucza") },
+                            )
+                        }
                         Text(
-                            "QuestGPT korzysta z bezpiecznego publicznego backendu HTTPS. Główny klucz OpenAI nie jest zapisany w APK.",
+                            "QuestGPT nie używa AppDeploy ani zewnętrznego backendu. W prywatnej instalacji APK Twój klucz API jest szyfrowany kluczem Android Keystore i używany bezpośrednio do api.openai.com.",
                             style = MaterialTheme.typography.bodyLarge
                         )
-                        Text(
-                            "Aktywny backend: ${QuestEndpoints.resolveBackend(backendUrl)}",
-                            style = MaterialTheme.typography.bodyMedium
+                        OutlinedTextField(
+                            value = apiKey,
+                            onValueChange = { apiKey = it },
+                            label = { Text(if (openAIConfigured) "Nowy klucz API (zostaw puste, aby nie zmieniać)" else "Klucz OpenAI API") },
+                            placeholder = { Text("sk-…") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
                         )
-                        if (QuestEndpoints.resolveBackend(backendUrl) != QuestEndpoints.PUBLIC_BACKEND) {
-                            FilledTonalButton(onClick = { onBackendUrl(QuestEndpoints.PUBLIC_BACKEND) }) {
-                                Text("Przywróć bezpieczne połączenie QuestGPT")
+                        OutlinedTextField(
+                            value = textModelDraft,
+                            onValueChange = { textModelDraft = it },
+                            label = { Text("Model tekstowy") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = realtimeModelDraft,
+                            onValueChange = { realtimeModelDraft = it },
+                            label = { Text("Model głosowy Realtime") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    onSaveOpenAI(apiKey.trim(), textModelDraft.trim(), realtimeModelDraft.trim())
+                                    apiKey = ""
+                                },
+                                enabled = (openAIConfigured || apiKey.isNotBlank()) && textModelDraft.isNotBlank() && realtimeModelDraft.isNotBlank(),
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Zapisz") }
+                            if (openAIConfigured) {
+                                OutlinedButton(onClick = { onClearOpenAI(); apiKey = "" }, modifier = Modifier.weight(1f)) {
+                                    Text("Usuń klucz")
+                                }
                             }
                         }
                         Text(
-                            "Uwaga: subskrypcja ChatGPT i OpenAI API są oddzielnymi usługami. Logowanie do ChatGPT nie przekazuje aplikacji klucza API.",
-                            style = MaterialTheme.typography.bodyMedium
+                            "Klucz nie jest częścią APK ani repozytorium. Jest jednak obecny na urządzeniu, dlatego ten tryb jest przeznaczony do prywatnego sideloadu, nie publicznej dystrybucji. Subskrypcja ChatGPT i rozliczenia OpenAI API są oddzielne.",
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
@@ -208,11 +258,11 @@ fun SettingsScreen(
                 PermissionRow("Mikrofon", micGranted, onMicPermission)
                 PermissionRow("Powiadomienia", notificationsGranted, onNotificationPermission)
                 PermissionRow("Instalowanie aktualizacji APK", installGranted, onInstallPermission)
-                DiagnosticsCard(backendUrl)
+                DiagnosticsCard()
 
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Text(
-                        "ADB Agent łączy obraz ekranu, drzewo UIAutomator i bezpieczne sterowanie. Auto Vision aktualizuje klatkę adaptacyjnie, a GPT może wykonać wyłącznie ograniczony zestaw akcji interfejsu.",
+                        "ADB Agent łączy obraz ekranu, drzewo UIAutomator i ograniczone sterowanie. Diagnostyka wyżej pokazuje oddzielnie, czy działa OpenAI, mikrofon, ADB shell, screenshot i UIAutomator.",
                         Modifier.padding(18.dp),
                         style = MaterialTheme.typography.bodyLarge
                     )

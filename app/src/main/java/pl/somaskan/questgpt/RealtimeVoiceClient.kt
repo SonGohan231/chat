@@ -29,6 +29,7 @@ import pl.somaskan.questgpt.adb.AdbAgent
 import pl.somaskan.questgpt.adb.AdbVisionMonitor
 import pl.somaskan.questgpt.adb.AgentToolCall
 import pl.somaskan.questgpt.adb.QuestAgentRuntime
+import java.util.concurrent.TimeUnit
 
 class RealtimeVoiceClient(
     private val context: Context,
@@ -38,7 +39,10 @@ class RealtimeVoiceClient(
     private val onError: (String) -> Unit,
     private val allowBackgroundHandoff: Boolean = true,
 ) {
-    private val http = OkHttpClient()
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .build()
     private var socket: WebSocket? = null
     private var recorder: AudioRecord? = null
     private var player: AudioTrack? = null
@@ -48,58 +52,58 @@ class RealtimeVoiceClient(
     @Volatile private var lastVisionSentAt = 0L
     @Volatile private var lastVisionHash: String? = null
     @Volatile private var startupPrompt: String? = null
-    @Volatile private var lastBaseUrl: String? = null
 
-    fun start(baseUrl: String, initialPrompt: String? = null) {
-        if (socket != null) return
+    fun start(initialPrompt: String? = null) {
+        if (socket != null || recordJob?.isActive == true) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            onError("Brak uprawnienia do mikrofonu")
+            onError("Brak uprawnienia do mikrofonu. Zezwól na mikrofon w Ustawieniach Questa.")
+            return
+        }
+        if (OpenAICredentialStore(context).readKey().isNullOrBlank()) {
+            onError("Brak klucza OpenAI API. Wejdź w Ustawienia > OpenAI i zapisz klucz.")
             return
         }
 
-        lastBaseUrl = baseUrl
         if (allowBackgroundHandoff) {
-            onState("Uruchamianie GPT Live w tle...")
-            VoiceAgentController.start(context.applicationContext, baseUrl, initialPrompt)
+            onState("Uruchamianie GPT Live…")
+            VoiceAgentController.start(context.applicationContext, initialPrompt)
             return
         }
 
         startupPrompt = initialPrompt?.takeIf { it.isNotBlank() }
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        onState("Łączenie z OpenAI...")
+        onState("Łączenie bezpośrednio z OpenAI…")
         scope?.launch {
-            runCatching { fetchRealtimeCredential(baseUrl) }
-                .onSuccess { credential -> connectDirect(credential) }
+            runCatching { connectDirect() }
                 .onFailure {
-                    onError(it.message ?: "Nie udało się uzyskać tokenu Realtime")
+                    onError(it.message ?: "Nie udało się uruchomić GPT Live")
                     stop()
                 }
         }
     }
 
-    private data class RealtimeCredential(val token: String, val model: String)
-
-    private suspend fun fetchRealtimeCredential(baseUrl: String): RealtimeCredential {
-        val credential = RealtimeCredentialProvider.fetch(baseUrl, "voice")
-        onState("Token Realtime: ${credential.transport}")
-        return RealtimeCredential(credential.token, credential.model)
-    }
-
-    private fun connectDirect(credential: RealtimeCredential) {
-        if (socket != null) return
+    private fun connectDirect() {
+        val store = OpenAICredentialStore(context)
+        val apiKey = store.readKey() ?: error("Brak klucza OpenAI API.")
+        val model = store.realtimeModel()
         val request = Request.Builder()
-            .url("wss://api.openai.com/v1/realtime?model=${credential.model}")
-            .header("Authorization", "Bearer ${credential.token}")
+            .url("wss://api.openai.com/v1/realtime?model=$model")
+            .header("Authorization", "Bearer $apiKey")
             .build()
 
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                onState("Połączono z OpenAI • Vision/Agent aktywny")
-                configureSession(webSocket)
-                startAudio(webSocket)
-                refreshVisionContext(webSocket, force = true)
-                startVisionPump(webSocket)
-                speakStartupPrompt(webSocket)
+                onState("Połączono z OpenAI • $model")
+                runCatching {
+                    configureSession(webSocket)
+                    startAudio(webSocket)
+                    refreshVisionContext(webSocket, force = true)
+                    startVisionPump(webSocket)
+                    speakStartupPrompt(webSocket)
+                }.onFailure {
+                    onError("Audio/Realtime: ${it.message ?: it.javaClass.simpleName}")
+                    stop()
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -114,18 +118,24 @@ class RealtimeVoiceClient(
                         "conversation.item.input_audio_transcription.completed" -> onUserTranscript(json.optString("transcript"))
                         "input_audio_buffer.speech_started" -> refreshVisionContext(webSocket)
                         "response.function_call_arguments.done" -> handleToolCall(webSocket, json)
-                        "error" -> onError(json.optJSONObject("error")?.optString("message") ?: "Realtime error")
+                        "error" -> {
+                            val error = json.optJSONObject("error")
+                            val message = error?.optString("message").orEmpty().ifBlank { "Błąd OpenAI Realtime" }
+                            onError(message)
+                        }
                     }
-                }.onFailure { onError(it.message ?: "Błąd Realtime") }
+                }.onFailure { onError(it.message ?: "Błąd danych Realtime") }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                onError(t.message ?: "Utracono połączenie głosowe")
-                stop()
+                socket = null
+                val suffix = response?.let { " • HTTP ${it.code}" }.orEmpty()
+                onError("Połączenie GPT Live nie powiodło się$suffix: ${t.message ?: t.javaClass.simpleName}")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                onState("Głos rozłączony")
+                socket = null
+                onState("Głos rozłączony • $code${reason.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}")
             }
         })
     }
@@ -135,28 +145,20 @@ class RealtimeVoiceClient(
         startupPrompt = null
         scope?.launch {
             delay(450L)
-            webSocket.send(
-                JSONObject()
-                    .put("type", "conversation.item.create")
-                    .put(
-                        "item",
-                        JSONObject()
-                            .put("type", "message")
-                            .put("role", "user")
-                            .put(
-                                "content",
-                                JSONArray().put(
-                                    JSONObject()
-                                        .put("type", "input_text")
-                                        .put("text", prompt)
-                                )
-                            )
-                    )
-                    .toString()
-            )
+            webSocket.send(userTextEvent(prompt).toString())
             webSocket.send(JSONObject().put("type", "response.create").toString())
         }
     }
+
+    private fun userTextEvent(text: String): JSONObject = JSONObject()
+        .put("type", "conversation.item.create")
+        .put(
+            "item",
+            JSONObject()
+                .put("type", "message")
+                .put("role", "user")
+                .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", text)))
+        )
 
     private fun handleToolCall(webSocket: WebSocket, event: JSONObject) {
         val callId = event.optString("call_id")
@@ -168,7 +170,7 @@ class RealtimeVoiceClient(
                 "Sterowanie GPT zostało wyłączone przez użytkownika."
             } else {
                 runCatching { AdbAgent.execute(AgentToolCall(callId, name, arguments)) }
-                    .getOrElse { "BŁĄD: ${it.message}" }
+                    .getOrElse { "BŁĄD: ${it.message ?: "akcja nie powiodła się"}" }
             }
             webSocket.send(
                 JSONObject()
@@ -182,7 +184,7 @@ class RealtimeVoiceClient(
                     )
                     .toString()
             )
-            delay(350L)
+            delay(300L)
             refreshVisionContext(webSocket, force = true)
             webSocket.send(JSONObject().put("type", "response.create").toString())
         }
@@ -195,20 +197,17 @@ class RealtimeVoiceClient(
         scope?.launch {
             val observation = runCatching { AdbAgent.observe() }.getOrNull() ?: return@launch
             val content = JSONArray().apply {
-                put(JSONObject().apply {
-                    put("type", "input_text")
-                    put(
-                        "text",
-                        "Aktualny kontekst Meta Quest 3. Aktywne okno: ${observation.currentActivity}. " +
-                            "Rozmiar: ${observation.displaySize}. Drzewo UI:\n${observation.uiSummary.take(12_000)}"
-                    )
-                })
-                observation.imageDataUrl?.let { image ->
-                    put(JSONObject().apply {
-                        put("type", "input_image")
-                        put("image_url", image)
-                        put("detail", "auto")
-                    })
+                put(
+                    JSONObject()
+                        .put("type", "input_text")
+                        .put(
+                            "text",
+                            "Aktualny kontekst Meta Quest 3. Aktywne okno: ${observation.currentActivity}. " +
+                                "Rozmiar: ${observation.displaySize}. Drzewo UI:\n${observation.uiSummary.take(10_000)}"
+                        )
+                )
+                observation.imageDataUrl?.takeIf { it.startsWith("data:image/") }?.let { image ->
+                    put(JSONObject().put("type", "input_image").put("image_url", image).put("detail", "auto"))
                 }
             }
             webSocket.send(
@@ -231,12 +230,12 @@ class RealtimeVoiceClient(
         visionJob?.cancel()
         visionJob = scope?.launch {
             while (isActive) {
-                delay(700L)
+                delay(900L)
                 if (!QuestAgentRuntime.autoVisionEnabled) continue
                 val frame = AdbVisionMonitor.latest() ?: continue
                 if (frame.hash == lastVisionHash) continue
                 val now = System.currentTimeMillis()
-                if (now - lastVisionSentAt < 2_000L) continue
+                if (now - lastVisionSentAt < 2_500L) continue
                 lastVisionSentAt = now
                 lastVisionHash = frame.hash
                 webSocket.send(
@@ -250,7 +249,7 @@ class RealtimeVoiceClient(
                                 .put(
                                     "content",
                                     JSONArray()
-                                        .put(JSONObject().put("type", "input_text").put("text", "Widok Questa zmienił się. Oto najnowsza klatka Auto Vision."))
+                                        .put(JSONObject().put("type", "input_text").put("text", "Widok Meta Quest 3 zmienił się. Oto najnowsza klatka Auto Vision."))
                                         .put(JSONObject().put("type", "input_image").put("image_url", frame.dataUrl).put("detail", "auto"))
                                 )
                         )
@@ -261,61 +260,64 @@ class RealtimeVoiceClient(
     }
 
     private fun configureSession(webSocket: WebSocket) {
-        val event = JSONObject().apply {
-            put("type", "session.update")
-            put("session", JSONObject().apply {
-                put("type", "realtime")
-                put(
-                    "instructions",
-                    "Jesteś asystentem działającym na Meta Quest 3. Odpowiadaj naturalnie i zwięźle w języku użytkownika. " +
-                        "Obrazy i drzewo UI opisują aktualny widok użytkownika. Gdy użytkownik prosi o wykonanie czynności na urządzeniu, używaj dostępnych narzędzi i po każdej akcji sprawdzaj nowy widok. " +
-                        "Nie wykonuj zakupów, wysyłania wiadomości, zmian konta, instalacji/usuwania aplikacji, resetu urządzenia ani innych istotnych działań bez jednoznacznej prośby użytkownika."
-                )
-                put("output_modalities", JSONArray().put("audio"))
-                put("tools", AdbAgent.realtimeTools())
-                put("tool_choice", "auto")
-                put("audio", JSONObject().apply {
-                    put("input", JSONObject().apply {
-                        put("format", JSONObject().put("type", "audio/pcm").put("rate", 24000))
-                        put("transcription", JSONObject().put("model", "gpt-realtime-whisper"))
-                        put("turn_detection", JSONObject().apply {
-                            put("type", "semantic_vad")
-                            put("create_response", true)
-                            put("interrupt_response", true)
-                            put("eagerness", "auto")
-                        })
-                    })
-                    put("output", JSONObject().apply {
-                        put("format", JSONObject().put("type", "audio/pcm").put("rate", 24000))
-                        put("voice", "marin")
+        val session = JSONObject()
+            .put("type", "realtime")
+            .put(
+                "instructions",
+                "Jesteś QuestGPT działającym na Meta Quest 3. Odpowiadaj naturalnie i zwięźle w języku użytkownika. " +
+                    "Obrazy i drzewo UI opisują aktualny widok. Używaj narzędzi tylko gdy użytkownik prosi o działanie na urządzeniu. " +
+                    "Nie wykonuj zakupów, wysyłania wiadomości, zmian konta, instalacji/usuwania aplikacji ani resetu bez jednoznacznej prośby i wymaganego potwierdzenia."
+            )
+            .put("output_modalities", JSONArray().put("audio"))
+            .put("audio", JSONObject().apply {
+                put("input", JSONObject().apply {
+                    put("format", JSONObject().put("type", "audio/pcm").put("rate", SAMPLE_RATE))
+                    put("transcription", JSONObject().put("model", "gpt-realtime-whisper"))
+                    put("turn_detection", JSONObject().apply {
+                        put("type", "semantic_vad")
+                        put("create_response", true)
+                        put("interrupt_response", true)
+                        put("eagerness", "auto")
                     })
                 })
+                put("output", JSONObject().apply {
+                    put("format", JSONObject().put("type", "audio/pcm").put("rate", SAMPLE_RATE))
+                    put("voice", "marin")
+                })
             })
+
+        val tools = AdbAgent.realtimeTools()
+        if (tools.length() > 0) {
+            session.put("tools", tools)
+            session.put("tool_choice", "auto")
         }
-        webSocket.send(event.toString())
+        webSocket.send(JSONObject().put("type", "session.update").put("session", session).toString())
     }
 
     private fun startAudio(webSocket: WebSocket) {
+        val minIn = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        check(minIn > 0) { "Quest nie zwrócił prawidłowego bufora wejścia audio ($minIn)." }
         val inputFormat = AudioFormat.Builder()
-            .setSampleRate(24000)
+            .setSampleRate(SAMPLE_RATE)
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
             .build()
+        val createdRecorder = AudioRecord.Builder()
+            .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            .setAudioFormat(inputFormat)
+            .setBufferSizeInBytes(maxOf(minIn * 2, 8192))
+            .build()
+        check(createdRecorder.state == AudioRecord.STATE_INITIALIZED) { "Nie udało się zainicjalizować mikrofonu." }
+        recorder = createdRecorder
+
+        val minOut = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        check(minOut > 0) { "Quest nie zwrócił prawidłowego bufora wyjścia audio ($minOut)." }
         val outputFormat = AudioFormat.Builder()
-            .setSampleRate(24000)
+            .setSampleRate(SAMPLE_RATE)
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
             .build()
-
-        val minIn = AudioRecord.getMinBufferSize(24000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        recorder = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-            .setAudioFormat(inputFormat)
-            .setBufferSizeInBytes(maxOf(minIn, 4096))
-            .build()
-
-        val minOut = AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        player = AudioTrack.Builder()
+        val createdPlayer = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -323,33 +325,35 @@ class RealtimeVoiceClient(
                     .build()
             )
             .setAudioFormat(outputFormat)
-            .setBufferSizeInBytes(maxOf(minOut, 8192))
+            .setBufferSizeInBytes(maxOf(minOut * 2, 16384))
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .build().also { it.play() }
+            .build()
+        check(createdPlayer.state == AudioTrack.STATE_INITIALIZED) { "Nie udało się zainicjalizować dźwięku odpowiedzi." }
+        player = createdPlayer
+        createdPlayer.play()
+        createdRecorder.startRecording()
+        check(createdRecorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Mikrofon nie rozpoczął nagrywania." }
 
-        recorder?.startRecording()
         recordJob = scope?.launch {
             val buffer = ByteArray(4096)
             while (isActive) {
                 val n = recorder?.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING) ?: -1
                 if (n > 0) {
-                    val b64 = Base64.encodeToString(buffer.copyOf(n), Base64.NO_WRAP)
                     webSocket.send(
                         JSONObject()
                             .put("type", "input_audio_buffer.append")
-                            .put("audio", b64)
+                            .put("audio", Base64.encodeToString(buffer, 0, n, Base64.NO_WRAP))
                             .toString()
                     )
+                } else if (n < 0) {
+                    onError("Mikrofon zwrócił błąd odczytu: $n")
+                    break
                 }
             }
         }
     }
 
     fun stop() {
-        val wasActive = socket != null || recorder != null || recordJob?.isActive == true
-        val handoffBaseUrl = lastBaseUrl
-        val shouldHandoff = allowBackgroundHandoff && wasActive && !handoffBaseUrl.isNullOrBlank() && QuestApp.shouldHandoffVoiceToService()
-
         recordJob?.cancel()
         recordJob = null
         visionJob?.cancel()
@@ -368,9 +372,9 @@ class RealtimeVoiceClient(
         lastVisionHash = null
         startupPrompt = null
         onState("Głos wyłączony")
+    }
 
-        if (shouldHandoff) {
-            runCatching { VoiceAgentController.start(context.applicationContext, handoffBaseUrl!!) }
-        }
+    companion object {
+        private const val SAMPLE_RATE = 24_000
     }
 }

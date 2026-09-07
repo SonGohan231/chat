@@ -8,13 +8,20 @@ object VoiceAgentController {
     private const val PREFS = "questgpt_voice"
     private const val KEY_DESIRED = "desired_running"
 
-    fun start(context: Context, backendUrl: String, initialPrompt: String? = null) {
+    fun start(context: Context, initialPrompt: String? = null) {
         val app = context.applicationContext
+        if (!OpenAICredentialStore(app).hasKey()) {
+            VoiceAgentRuntime.desiredRunning = false
+            VoiceAgentRuntime.running = false
+            VoiceAgentRuntime.state = "Brak klucza OpenAI API"
+            VoiceAgentRuntime.lastError = "Wejdź w Ustawienia > OpenAI i zapisz klucz API."
+            return
+        }
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_DESIRED, true).apply()
         VoiceAgentRuntime.desiredRunning = true
+        VoiceAgentRuntime.lastError = null
         val intent = Intent(app, VoiceAgentService::class.java)
             .setAction(VoiceAgentService.ACTION_START)
-            .putExtra(VoiceAgentService.EXTRA_BACKEND_URL, backendUrl)
         if (!initialPrompt.isNullOrBlank()) intent.putExtra(VoiceAgentService.EXTRA_INITIAL_PROMPT, initialPrompt)
         if (Build.VERSION.SDK_INT >= 26) app.startForegroundService(intent) else app.startService(intent)
     }
@@ -25,6 +32,7 @@ object VoiceAgentController {
         VoiceAgentRuntime.desiredRunning = false
         VoiceAgentRuntime.running = false
         VoiceAgentRuntime.state = "Głos wyłączony"
+        VoiceAgentRuntime.lastError = null
         VoiceAgentRuntime.resetConversationDraft()
         app.stopService(Intent(app, VoiceAgentService::class.java))
     }

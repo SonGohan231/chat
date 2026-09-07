@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, questgpt-live-edit-v3]
   workflow_dispatch:
 
 permissions:
@@ -22,13 +22,14 @@ jobs:
           gradle-version: '8.9'
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
-      - name: Prepare release APK
+      - name: Prepare APK
         run: cp app/build/outputs/apk/debug/app-debug.apk QuestGPT.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: questgpt-debug-apk
+          name: questgpt-apk-${{ github.run_number }}
           path: QuestGPT.apk
       - name: Publish self-update release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: questgpt-${{ github.run_number }}

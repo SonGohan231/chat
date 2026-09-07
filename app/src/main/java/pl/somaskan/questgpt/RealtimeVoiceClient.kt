@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
@@ -26,7 +27,10 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
-import pl.somaskan.questgpt.adb.AdbVisionCapture
+import pl.somaskan.questgpt.adb.AdbAgent
+import pl.somaskan.questgpt.adb.AdbVisionMonitor
+import pl.somaskan.questgpt.adb.AgentToolCall
+import pl.somaskan.questgpt.adb.QuestAgentRuntime
 
 class RealtimeVoiceClient(
     private val context: Context,
@@ -41,7 +45,9 @@ class RealtimeVoiceClient(
     private var player: AudioTrack? = null
     private var scope: CoroutineScope? = null
     private var recordJob: Job? = null
+    private var visionJob: Job? = null
     @Volatile private var lastVisionSentAt = 0L
+    @Volatile private var lastVisionHash: String? = null
 
     fun start(baseUrl: String) {
         if (socket != null) return
@@ -93,9 +99,10 @@ class RealtimeVoiceClient(
 
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                onState("Połączono z OpenAI — mów")
+                onState("Połączono z OpenAI • Vision/Agent aktywny")
                 configureSession(webSocket)
                 refreshVisionContext(webSocket, force = true)
+                startVisionPump(webSocket)
                 startAudio(webSocket)
             }
 
@@ -110,6 +117,7 @@ class RealtimeVoiceClient(
                         "response.output_audio_transcript.delta" -> onAssistantDelta(json.optString("delta"))
                         "conversation.item.input_audio_transcription.completed" -> onUserTranscript(json.optString("transcript"))
                         "input_audio_buffer.speech_started" -> refreshVisionContext(webSocket)
+                        "response.function_call_arguments.done" -> handleToolCall(webSocket, json)
                         "error" -> onError(json.optJSONObject("error")?.optString("message") ?: "Realtime error")
                     }
                 }.onFailure { onError(it.message ?: "Błąd Realtime") }
@@ -126,32 +134,105 @@ class RealtimeVoiceClient(
         })
     }
 
+    private fun handleToolCall(webSocket: WebSocket, event: JSONObject) {
+        val callId = event.optString("call_id")
+        val name = event.optString("name")
+        if (callId.isBlank() || name.isBlank()) return
+        val arguments = runCatching { JSONObject(event.optString("arguments", "{}")) }.getOrDefault(JSONObject())
+        scope?.launch {
+            val output = if (!QuestAgentRuntime.agentControlEnabled) {
+                "Sterowanie GPT zostało wyłączone przez użytkownika."
+            } else {
+                runCatching { AdbAgent.execute(AgentToolCall(callId, name, arguments)) }
+                    .getOrElse { "BŁĄD: ${it.message}" }
+            }
+            webSocket.send(
+                JSONObject()
+                    .put("type", "conversation.item.create")
+                    .put(
+                        "item",
+                        JSONObject()
+                            .put("type", "function_call_output")
+                            .put("call_id", callId)
+                            .put("output", output.take(4_000))
+                    )
+                    .toString()
+            )
+            delay(350L)
+            refreshVisionContext(webSocket, force = true)
+            webSocket.send(JSONObject().put("type", "response.create").toString())
+        }
+    }
+
     private fun refreshVisionContext(webSocket: WebSocket, force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (!force && now - lastVisionSentAt < 2_000L) return
+        if (!force && now - lastVisionSentAt < 1_500L) return
         lastVisionSentAt = now
         scope?.launch {
-            val image = AdbVisionCapture.captureDataUrlIfAvailable(autoConnectIfNeeded = false)
-                ?: return@launch
-            val event = JSONObject().apply {
-                put("type", "conversation.item.create")
-                put("item", JSONObject().apply {
-                    put("type", "message")
-                    put("role", "user")
-                    put("content", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("type", "input_text")
-                            put("text", "To jest aktualny widok użytkownika na Meta Quest 3. Użyj go jako kontekstu bieżącej wypowiedzi.")
-                        })
-                        put(JSONObject().apply {
-                            put("type", "input_image")
-                            put("image_url", image)
-                            put("detail", "auto")
-                        })
-                    })
+            val observation = runCatching { AdbAgent.observe() }.getOrNull() ?: return@launch
+            val content = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("type", "input_text")
+                    put(
+                        "text",
+                        "Aktualny kontekst Meta Quest 3. Aktywne okno: ${observation.currentActivity}. " +
+                            "Rozmiar: ${observation.displaySize}. Drzewo UI:\n${observation.uiSummary.take(12_000)}"
+                    )
                 })
+                observation.imageDataUrl?.let { image ->
+                    put(JSONObject().apply {
+                        put("type", "input_image")
+                        put("image_url", image)
+                        put("detail", "auto")
+                    })
+                }
             }
-            webSocket.send(event.toString())
+            webSocket.send(
+                JSONObject()
+                    .put("type", "conversation.item.create")
+                    .put(
+                        "item",
+                        JSONObject()
+                            .put("type", "message")
+                            .put("role", "user")
+                            .put("content", content)
+                    )
+                    .toString()
+            )
+            lastVisionHash = AdbVisionMonitor.latest()?.hash
+        }
+    }
+
+    private fun startVisionPump(webSocket: WebSocket) {
+        visionJob?.cancel()
+        visionJob = scope?.launch {
+            while (isActive) {
+                delay(700L)
+                if (!QuestAgentRuntime.autoVisionEnabled) continue
+                val frame = AdbVisionMonitor.latest() ?: continue
+                if (frame.hash == lastVisionHash) continue
+                val now = System.currentTimeMillis()
+                if (now - lastVisionSentAt < 2_000L) continue
+                lastVisionSentAt = now
+                lastVisionHash = frame.hash
+                webSocket.send(
+                    JSONObject()
+                        .put("type", "conversation.item.create")
+                        .put(
+                            "item",
+                            JSONObject()
+                                .put("type", "message")
+                                .put("role", "user")
+                                .put(
+                                    "content",
+                                    JSONArray()
+                                        .put(JSONObject().put("type", "input_text").put("text", "Widok Questa zmienił się. Oto najnowsza klatka Auto Vision."))
+                                        .put(JSONObject().put("type", "input_image").put("image_url", frame.dataUrl).put("detail", "auto"))
+                                )
+                        )
+                        .toString()
+                )
+            }
         }
     }
 
@@ -160,8 +241,15 @@ class RealtimeVoiceClient(
             put("type", "session.update")
             put("session", JSONObject().apply {
                 put("type", "realtime")
-                put("instructions", "Odpowiadaj naturalnie i krótko. Używaj języka użytkownika. Jeżeli w kontekście rozmowy pojawia się obraz ekranu Meta Quest 3, traktuj go jako aktualny widok użytkownika.")
+                put(
+                    "instructions",
+                    "Jesteś asystentem działającym na Meta Quest 3. Odpowiadaj naturalnie i zwięźle w języku użytkownika. " +
+                        "Obrazy i drzewo UI opisują aktualny widok użytkownika. Gdy użytkownik prosi o wykonanie czynności na urządzeniu, używaj dostępnych narzędzi i po każdej akcji sprawdzaj nowy widok. " +
+                        "Nie wykonuj zakupów, wysyłania wiadomości, zmian konta, instalacji/usuwania aplikacji, resetu urządzenia ani innych istotnych działań bez jednoznacznej prośby użytkownika."
+                )
                 put("output_modalities", JSONArray().put("audio"))
+                put("tools", AdbAgent.realtimeTools())
+                put("tool_choice", "auto")
                 put("audio", JSONObject().apply {
                     put("input", JSONObject().apply {
                         put("format", JSONObject().put("type", "audio/pcm").put("rate", 24000))
@@ -236,6 +324,8 @@ class RealtimeVoiceClient(
     fun stop() {
         recordJob?.cancel()
         recordJob = null
+        visionJob?.cancel()
+        visionJob = null
         runCatching { recorder?.stop() }
         recorder?.release()
         recorder = null
@@ -247,6 +337,7 @@ class RealtimeVoiceClient(
         scope?.cancel()
         scope = null
         lastVisionSentAt = 0L
+        lastVisionHash = null
         onState("Głos wyłączony")
     }
 }

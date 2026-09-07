@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.net.URI
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -144,8 +145,7 @@ class WirelessAdbController(context: Context) {
     suspend fun inputText(text: String): String {
         val clean = text.take(500)
         require(clean.isNotBlank()) { "Tekst jest pusty." }
-        val escaped = clean.replace("'", "'\\''")
-        runCommand("input text '$escaped'")
+        runCommand("input text ${shellQuote(clean)}")
         return "Wpisano tekst (${clean.length} znaków)"
     }
 
@@ -167,9 +167,91 @@ class WirelessAdbController(context: Context) {
     }
 
     suspend fun openPackage(packageName: String): String {
-        require(packageName.matches(Regex("[A-Za-z0-9_.]{3,160}"))) { "Nieprawidłowa nazwa pakietu." }
+        requirePackage(packageName)
         val result = runCommand("monkey -p $packageName -c android.intent.category.LAUNCHER 1")
         return "Uruchomienie $packageName: ${result.take(500)}"
+    }
+
+    suspend fun openUrl(url: String): String {
+        val clean = url.trim().take(2048)
+        val parsed = runCatching { URI(clean) }.getOrElse { error("Nieprawidłowy URL.") }
+        require(parsed.scheme.equals("http", true) || parsed.scheme.equals("https", true)) { "Dozwolone są tylko adresy http/https." }
+        require(!parsed.host.isNullOrBlank()) { "URL nie zawiera prawidłowego hosta." }
+        runCommand("am start -a android.intent.action.VIEW -d ${shellQuote(clean)}")
+        return "Otworzono URL: $clean"
+    }
+
+    suspend fun launchSettings(section: String): String {
+        val normalized = section.uppercase()
+        val action = when (normalized) {
+            "WIFI" -> "android.settings.WIFI_SETTINGS"
+            "BLUETOOTH" -> "android.settings.BLUETOOTH_SETTINGS"
+            "DISPLAY" -> "android.settings.DISPLAY_SETTINGS"
+            "SOUND" -> "android.settings.SOUND_SETTINGS"
+            "APPS" -> "android.settings.APPLICATION_SETTINGS"
+            "DEVELOPER" -> "android.settings.APPLICATION_DEVELOPMENT_SETTINGS"
+            "ACCESSIBILITY" -> "android.settings.ACCESSIBILITY_SETTINGS"
+            "NETWORK" -> "android.settings.WIRELESS_SETTINGS"
+            else -> error("Niedozwolona sekcja ustawień: $section")
+        }
+        runCommand("am start -a $action")
+        return "Otwarto ustawienia: $normalized"
+    }
+
+    suspend fun mediaControl(action: String): String {
+        val normalized = action.uppercase()
+        val keyCode = when (normalized) {
+            "PLAY_PAUSE" -> "KEYCODE_MEDIA_PLAY_PAUSE"
+            "NEXT" -> "KEYCODE_MEDIA_NEXT"
+            "PREVIOUS" -> "KEYCODE_MEDIA_PREVIOUS"
+            "STOP" -> "KEYCODE_MEDIA_STOP"
+            else -> error("Niedozwolona akcja multimediów: $action")
+        }
+        runCommand("input keyevent $keyCode")
+        return "Sterowanie multimediami: $normalized"
+    }
+
+    suspend fun adjustVolume(direction: String, steps: Int): String {
+        val normalized = direction.uppercase()
+        val keyCode = when (normalized) {
+            "UP" -> "KEYCODE_VOLUME_UP"
+            "DOWN" -> "KEYCODE_VOLUME_DOWN"
+            "MUTE" -> "KEYCODE_VOLUME_MUTE"
+            else -> error("Niedozwolona zmiana głośności: $direction")
+        }
+        val count = if (normalized == "MUTE") 1 else steps.coerceIn(1, 10)
+        repeat(count) { runCommand("input keyevent $keyCode") }
+        return "Głośność: $normalized${if (normalized == "MUTE") "" else " x$count"}"
+    }
+
+    suspend fun setBrightness(percent: Int): String {
+        val value = percent.coerceIn(5, 100)
+        val raw = ((value / 100.0) * 255.0).toInt().coerceIn(13, 255)
+        runCommand("settings put system screen_brightness_mode 0; settings put system screen_brightness $raw")
+        return "Jasność ustawiona na około $value%"
+    }
+
+    suspend fun toggleWifi(enabled: Boolean): String {
+        runCommand("svc wifi ${if (enabled) "enable" else "disable"}")
+        return "Wi-Fi: ${if (enabled) "włączone" else "wyłączone"}"
+    }
+
+    suspend fun toggleBluetooth(enabled: Boolean): String {
+        val verb = if (enabled) "enable" else "disable"
+        runCommand("(svc bluetooth $verb 2>/dev/null) || (cmd bluetooth_manager $verb 2>/dev/null) || true")
+        return "Bluetooth: wysłano polecenie $verb"
+    }
+
+    suspend fun installApk(path: String): String {
+        val clean = validateDownloadApkPath(path)
+        val result = runCommand("pm install -r --user 0 ${shellQuote(clean)}")
+        return "Instalacja APK: ${result.take(1000)}"
+    }
+
+    suspend fun uninstallPackage(packageName: String): String {
+        requirePackage(packageName)
+        val result = runCommand("pm uninstall --user 0 $packageName")
+        return "Usuwanie $packageName: ${result.take(1000)}"
     }
 
     suspend fun captureScreenshotPng(autoConnectIfNeeded: Boolean = true): ByteArray = withContext(Dispatchers.IO) {
@@ -204,6 +286,22 @@ class WirelessAdbController(context: Context) {
         check(isPng(raw)) { "ADB zwróciło dane, ale nie jest to prawidłowy screenshot PNG." }
         raw
     }
+
+    private fun validateDownloadApkPath(path: String): String {
+        val clean = path.trim().take(500)
+        require(clean.endsWith(".apk", ignoreCase = true)) { "Plik musi mieć rozszerzenie .apk." }
+        require(clean.startsWith("/sdcard/Download/") || clean.startsWith("/storage/emulated/0/Download/")) {
+            "Agent może instalować APK wyłącznie z folderu Download."
+        }
+        require(!clean.contains('\n') && !clean.contains('\r') && !clean.contains('\u0000')) { "Nieprawidłowa ścieżka APK." }
+        return clean
+    }
+
+    private fun requirePackage(packageName: String) {
+        require(packageName.matches(Regex("[A-Za-z0-9_.]{3,160}"))) { "Nieprawidłowa nazwa pakietu." }
+    }
+
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     private fun isPng(bytes: ByteArray): Boolean =
         bytes.size > 8 &&

@@ -27,10 +27,10 @@ object QuestDiagnostics {
         )
         if (settings.configured) {
             val tester = OpenAIConnectionTester(app)
-            val textTest = tester.testModel(settings.textModel)
-            items += DiagnosticItem("OpenAI tekst", textTest.ok, textTest.detail)
-            val realtimeTest = tester.testModel(settings.realtimeModel)
-            items += DiagnosticItem("OpenAI Realtime", realtimeTest.ok, realtimeTest.detail)
+            val textTest = tester.testText()
+            items += DiagnosticItem("OpenAI Responses / tekst", textTest.ok, textTest.detail)
+            val realtimeTest = tester.testRealtime()
+            items += DiagnosticItem("OpenAI Realtime / sesja audio", realtimeTest.ok, realtimeTest.detail)
         }
 
         val mic = ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

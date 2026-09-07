@@ -15,7 +15,7 @@ android {
         minSdk = 32
         targetSdk = 35
         versionCode = ciBuild
-        versionName = "0.2.$ciBuild"
+        versionName = "0.3.$ciBuild"
     }
 
     compileOptions {
@@ -46,4 +46,7 @@ dependencies {
     implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
     implementation("com.github.MuntashirAkon:sun-security-android:1.1")
     implementation("org.conscrypt:conscrypt-android:2.5.3")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

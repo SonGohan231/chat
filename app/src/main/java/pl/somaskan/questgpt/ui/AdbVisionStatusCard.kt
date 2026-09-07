@@ -108,5 +108,7 @@ fun AdbVisionStatusCard(compact: Boolean = false) {
                 }
             }
         }
+
+        WorldVisionStatusCard(compact = compact)
     }
 }

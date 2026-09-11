@@ -140,7 +140,12 @@ class VoiceService : Service() {
         val s = Hub.state
         val frame = s.frame
         val now = SystemClock.elapsedRealtime()
-        if(!s.sharing || !gate.ready || !Protocol.fresh(frame, now) || frame == null || frame.sequence == lastFrameSequence) return
+        if(!s.sharing || !gate.ready) return
+        if(!Protocol.fresh(frame, now) || frame == null) {
+            if(imageItems.isNotEmpty()) clearScreenContext("Aktualny ekran jest niedostępny lub pusty. Nie opisuj poprzednich klatek jako obecnego widoku.")
+            return
+        }
+        if(frame.sequence == lastFrameSequence) return
         if(!force && now - lastImageAt < 1950L) return
         val id = "screen_${now}_${frame.sequence}"
         if(send(Protocol.item("Udostępniany ekran, klatka ${frame.sequence}. To obraz z chwili przechwycenia; odpowiedz dopiero na pytanie.", listOf(frame.dataUrl), id))) {
@@ -152,11 +157,15 @@ class VoiceService : Service() {
             }
         }
     }
-    fun clearScreenContext() { Hub.main.post {
-        while(imageItems.isNotEmpty()) send(JSONObject().put("type", "conversation.item.delete").put("item_id", imageItems.removeFirst()))
-        pendingImages.clear(); lastFrameSequence = -1L
-        if(gate.ready && !ended) send(Protocol.item("Udostępnianie ekranu zostało zatrzymane. Nie masz aktualnego widoku."))
-    } }
+    fun clearScreenContext(reason: String = "Udostępnianie ekranu zostało zatrzymane. Nie masz aktualnego widoku.") {
+        val clear: () -> Unit = {
+            while(imageItems.isNotEmpty()) send(JSONObject().put("type", "conversation.item.delete").put("item_id", imageItems.removeFirst()))
+            pendingImages.clear(); lastFrameSequence = -1L
+            if(gate.ready && !ended) send(Protocol.item(reason))
+            Unit
+        }
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper()) clear() else Hub.main.post(clear)
+    }
     fun sendText(text: String, images: List<String>): Boolean {
         if(!gate.ready || ended) return false
         if(replying) { Hub.note("Najpierw użyj Przerwij albo poczekaj na koniec odpowiedzi."); return false }

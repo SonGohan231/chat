@@ -14,15 +14,16 @@ import java.util.concurrent.TimeUnit
 object Api {
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS).callTimeout(110, TimeUnit.SECONDS).build()
-    fun ask(context: Context, prompt: String, images: List<String> = emptyList()) {
-        if (Hub.state.busy) return
+    fun ask(context: Context, prompt: String, images: List<String> = emptyList()): Boolean {
+        if (Hub.state.busy) return false
         val store = CredentialStore(context)
         val key = runCatching { store.readKey() }.getOrNull()
-        if (key.isNullOrBlank()) { Hub.note("Najpierw zapisz klucz w Połączeniu."); return }
+        if (key.isNullOrBlank()) { Hub.note("Najpierw zapisz klucz w Połączeniu."); return false }
         if (Hub.state.voiceActive) {
-            if (!Hub.state.voiceReady) { Hub.note("Poczekaj na gotowość rozmowy Live."); return }
-            if (Hub.voiceService?.sendText(prompt, images) == true) Hub.message("user", prompt + if(images.isNotEmpty()) " [obraz: ${images.size}]" else "")
-            return
+            if (!Hub.state.voiceReady) { Hub.note("Poczekaj na gotowość rozmowy Live."); return false }
+            val accepted=Hub.voiceService?.sendText(prompt, images) == true
+            if (accepted) Hub.message("user", prompt + if(images.isNotEmpty()) " [obraz: ${images.size}]" else "")
+            return accepted
         }
         val history = Hub.state.messages
         Hub.message("user", prompt + if(images.isNotEmpty()) " [obraz: ${images.size}]" else "")
@@ -51,6 +52,7 @@ object Api {
                 }
             }
         })
+        return true
     }
     fun test(context: Context) {
         val store = CredentialStore(context)

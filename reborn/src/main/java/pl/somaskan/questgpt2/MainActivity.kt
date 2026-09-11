@@ -161,7 +161,7 @@ open class PanelActivity : Activity() {
             Hub.state.voiceActive -> emptyList()
             else -> Draft.referenceImages
         }
-        Api.ask(this,prompt,images)
+        if(!Api.ask(this,prompt,images)) return
         draft.text.clear(); Draft.text=""; Draft.images.clear(); renderAttachments()
     }
     private fun toggleVoice() {

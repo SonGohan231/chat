@@ -34,7 +34,7 @@ Poprzednia aplikacja w `app/` pozostaje osobnym produktem. Nie należy uruchamia
 - API nie daje aplikacji historii konta ChatGPT, jego pamięci ani abonamentu. Klucz i dostępny model trzeba skonfigurować na urządzeniu. Nie wykonano płatnego testu OpenAI bez klucza użytkownika.
 - Nie ma sterowania innymi aplikacjami, ADB, ukrytego nasłuchu, wybudzania hasłem ani dostępu do chronionych treści. Głos w tle i overlay wymagają próby na fizycznym Queście; emulator Androida nie zastępuje Horizon OS.
 - Przycisk zatrzymania nie cofa danych już przekazanych do OpenAI.
-- Domyślne modele odziedziczone z ostatniej konfiguracji projektu: `gpt-5.6` i `gpt-realtime-2.1`. Można je zmienić w Połączeniu; dostęp zależy od projektu API.
+- Domyślne modele według dokumentacji OpenAI: `gpt-5.6-sol` i `gpt-realtime-2.1`. Można je zmienić w Połączeniu; dostęp zależy od projektu API.
 
 ## Budowanie i podpis
 

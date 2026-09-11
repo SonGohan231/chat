@@ -43,10 +43,7 @@ jobs:
           arch: x86_64
           profile: pixel_c
           disable-animations: true
-          script: |
-            gradle :reborn:connectedDebugAndroidTest --stacktrace; TEST_RESULT=$?
-            adb pull /sdcard/Android/data/pl.somaskan.questgpt2/files/ screenshots/
-            exit $TEST_RESULT
+          script: bash scripts/test-questgpt2.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:

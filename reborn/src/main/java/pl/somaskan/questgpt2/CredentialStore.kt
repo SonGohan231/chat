@@ -119,7 +119,7 @@ class CredentialStore(context: Context) {
     private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
     companion object {
-        const val DEFAULT_TEXT_MODEL = "gpt-5.6"
+        const val DEFAULT_TEXT_MODEL = "gpt-5.6-sol"
         const val DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1"
 
         private const val PREFS = "questgpt2_openai"

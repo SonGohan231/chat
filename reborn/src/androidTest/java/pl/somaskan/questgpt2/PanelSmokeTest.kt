@@ -15,16 +15,20 @@ import java.io.File
 class PanelSmokeTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+    private fun capture(name: String) {
+        device.executeShellCommand("mkdir -p /sdcard/Download/questgpt2")
+        device.executeShellCommand("screencap -p /sdcard/Download/questgpt2/$name.png")
+    }
     @Test fun nativePanelsLaunchAndKeepSharedConversation() {
         context.startActivity(Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
         assertTrue(device.wait(Until.hasObject(By.text("QuestGPT 2")),10000))
         assertTrue(device.hasObject(By.text("Wyślij")))
         assertTrue(device.hasObject(By.text("Live")))
-        device.takeScreenshot(File(context.getExternalFilesDir(null),"main.png"))
+        capture("main")
         device.findObject(By.text("Mini")).click()
         assertTrue(device.wait(Until.hasObject(By.text("QuestGPT · Mini")),8000))
         assertTrue(device.hasObject(By.text("Wyślij")))
-        device.takeScreenshot(File(context.getExternalFilesDir(null),"mini.png"))
+        capture("mini")
         device.findObject(By.text("Live")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Połączenie")),5000))
         assertFalse(Hub.state.voiceActive)
@@ -62,7 +66,7 @@ class PanelSmokeTest {
         assertTrue(device.wait(Until.hasObject(By.textContains("Ekran udostępniany")),15000))
         assertNotNull(Hub.state.frame)
         assertFalse(Hub.state.frame!!.blank)
-        device.takeScreenshot(File(context.getExternalFilesDir(null),"screen-sharing.png"))
+        capture("screen-sharing")
         Hub.screenService!!.stopCapture()
         assertFalse(Hub.state.sharing)
         assertNull(Hub.state.frame)

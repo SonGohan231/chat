@@ -55,7 +55,7 @@ object Hub {
         }
     }
     fun complete(id: String) { change { s -> s.copy(messages = s.messages.map { if (it.id == id) it.copy(complete = true) else it }) }; save() }
-    fun clear() { textCall?.cancel(); voiceService?.stopVoice(); change { it.copy(messages = emptyList(), note = "Nowa rozmowa", busy = false) }; save() }
+    fun clear() { textCall?.cancel(); textCall=null; voiceService?.stopVoice(); change { it.copy(messages = emptyList(), note = "Nowa rozmowa", busy = false) }; save() }
     @Synchronized private fun save() {
         val array = JSONArray()
         state.messages.filter { it.complete }.forEach { array.put(JSONObject().put("id", it.id).put("role", it.role).put("text", it.text)) }

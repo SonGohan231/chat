@@ -35,6 +35,7 @@ class AudioEngine(private val context: Context, private val onPcm: (ByteArray) -
     private var itemId: String? = null
     private var itemStartHead = 0L
     private var written = 0L
+    private val interruptedItems = mutableSetOf<String>()
     private val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
     private val recordingCallback = object : AudioManager.AudioRecordingCallback() {
@@ -110,7 +111,7 @@ class AudioEngine(private val context: Context, private val onPcm: (ByteArray) -
         }
     }
     @Synchronized fun enqueue(id: String, bytes: ByteArray) {
-        if(!running) return
+        if(!running || id in interruptedItems) return
         if(itemId != id) { itemId = id; itemStartHead = track?.playbackHeadPosition?.toLong()?.and(0xffffffffL) ?: 0L; written = 0L }
         if(!queue.offer(generation.get() to bytes)) onError("Dźwięk napływa zbyt szybko. Sesja została zatrzymana; uruchom Live ponownie.")
     }
@@ -118,6 +119,7 @@ class AudioEngine(private val context: Context, private val onPcm: (ByteArray) -
         val head = track?.playbackHeadPosition?.toLong()?.and(0xffffffffL) ?: 0L
         val ms = (head - itemStartHead).coerceIn(0L, written) * 1000L / 24000L
         val result = itemId?.let { it to ms }
+        itemId?.let { interruptedItems.add(it) }
         generation.incrementAndGet(); queue.clear(); itemId = null; written = 0L
         runCatching { track?.pause(); track?.flush(); if(running) track?.play() }
         return result

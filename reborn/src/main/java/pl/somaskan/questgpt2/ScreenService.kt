@@ -85,7 +85,11 @@ class ScreenService : Service() {
         val padded = Bitmap.createBitmap(paddedWidth, image.height, Bitmap.Config.ARGB_8888)
         var cropped: Bitmap? = null
         try {
-            padded.copyPixelsFromBuffer(plane.buffer)
+            val buffer=plane.buffer
+            if(buffer.remaining() < padded.byteCount) {
+                val filled=java.nio.ByteBuffer.allocate(padded.byteCount)
+                filled.put(buffer);filled.rewind();padded.copyPixelsFromBuffer(filled)
+            } else padded.copyPixelsFromBuffer(buffer)
             val rect = image.cropRect
             val b = Bitmap.createBitmap(padded, rect.left, rect.top, rect.width(), rect.height())
             cropped = b

@@ -115,6 +115,7 @@ open class PanelActivity : Activity() {
         setContentView(root)
         if(Hub.state.messages.isEmpty()) Hub.message("guide", "Cześć! Możesz ze mną pisać, rozmawiać i pokazywać obrazy.\n\nZacznij od ⋯ → Połączenie: zapisz własny klucz OpenAI API i wykonaj test. Potem włącz Live oraz Ekran.\n\nMini panel otworzysz przyciskiem Mini albo z menu Questa podczas gry.")
         receiveShare(intent)
+        Updates.check()
     }
     override fun onStart() { super.onStart(); Hub.observe(observer); renderAttachments() }
     override fun onStop() { Draft.text=draft.text.toString(); Hub.unobserve(observer); super.onStop() }
@@ -281,7 +282,7 @@ open class PanelActivity : Activity() {
             3->AlertDialog.Builder(this).setTitle("Wyczyścić rozmowę?").setMessage("Usunie lokalną historię i zakończy Live.")
                 .setPositiveButton("Wyczyść") {_,_->Hub.clear();Draft.images.clear();Draft.referenceImages=emptyList();renderAttachments()}.setNegativeButton("Anuluj",null).show()
             4->export()
-            5->startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/SonGohan231/chat/actions/workflows/questgpt2.yml")))
+            5->startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://questgpt-2.songoku222.chatgpt.site")))
             6->{Hub.voiceService?.stopVoice();Hub.screenService?.stopCapture();Hub.textCall?.cancel();Hub.note("Mikrofon i udostępnianie zatrzymane.")}
         }}.show()
     }

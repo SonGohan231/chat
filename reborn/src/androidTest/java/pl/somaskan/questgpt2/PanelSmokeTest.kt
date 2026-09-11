@@ -28,7 +28,7 @@ class PanelSmokeTest {
         device.findObject(By.text("Live")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Połączenie")),5000))
         assertFalse(Hub.state.voiceActive)
-        device.findObject(By.text("Zamknij")).click()
+        device.findObject(By.res("android", "button2")).click()
     }
     @Test fun keystoreRoundtripNeverStoresPlaintext() {
         val store=CredentialStore(context)
@@ -46,7 +46,24 @@ class PanelSmokeTest {
         assertTrue(device.wait(Until.hasObject(By.text("Ekran")),8000))
         device.findObject(By.text("Ekran")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Udostępnij swój widok")),5000))
-        device.findObject(By.text("Anuluj")).click()
+        device.findObject(By.res("android", "button2")).click()
+        assertFalse(Hub.state.sharing)
+        assertNull(Hub.state.frame)
+    }
+    @Test fun actualAndroidProjectionProducesAFrameAndStopsCleanly() {
+        context.startActivity(Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        assertTrue(device.wait(Until.hasObject(By.text("Ekran")),8000))
+        device.findObject(By.text("Ekran")).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Udostępnij swój widok")),5000))
+        device.findObject(By.res("android", "button1")).click()
+        val consent=device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)start now|start recording|start"))),8000)
+        assertNotNull("System capture consent should be shown",consent)
+        consent.click()
+        assertTrue(device.wait(Until.hasObject(By.textContains("Ekran udostępniany")),15000))
+        assertNotNull(Hub.state.frame)
+        assertFalse(Hub.state.frame!!.blank)
+        device.takeScreenshot(File(context.getExternalFilesDir(null),"screen-sharing.png"))
+        Hub.screenService!!.stopCapture()
         assertFalse(Hub.state.sharing)
         assertNull(Hub.state.frame)
     }

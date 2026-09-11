@@ -3,6 +3,8 @@
 Nowy kod znajduje się w `reborn/`. Pakiet instalacyjny: `pl.somaskan.questgpt2`.
 Poprzednia aplikacja w `app/` pozostaje osobnym produktem. Nie należy uruchamiać obu sesji głosowych równocześnie.
 
+**Pobieranie i prowadzenie przez instalację:** [strona QuestGPT 2](https://questgpt-2.songoku222.chatgpt.site).
+
 ## Uruchomienie
 
 1. Zainstaluj podpisane `QuestGPT-2.apk` w goglach z aktywnym trybem deweloperskim. Użyj istniejącego instalatora APK/SideQuest lub `adb install QuestGPT-2.apk`.
@@ -35,6 +37,23 @@ Poprzednia aplikacja w `app/` pozostaje osobnym produktem. Nie należy uruchamia
 - Nie ma sterowania innymi aplikacjami, ADB, ukrytego nasłuchu, wybudzania hasłem ani dostępu do chronionych treści. Głos w tle i overlay wymagają próby na fizycznym Queście; emulator Androida nie zastępuje Horizon OS.
 - Przycisk zatrzymania nie cofa danych już przekazanych do OpenAI.
 - Domyślne modele według dokumentacji OpenAI: `gpt-5.6-sol` i `gpt-realtime-2.1`. Można je zmienić w Połączeniu; dostęp zależy od projektu API.
+
+## Próba na fizycznym Meta Quest 3
+
+Wykonaj ją po instalacji; poniższe pozycje nie są wynikami już przeprowadzonego testu sprzętowego.
+
+| Próba | Oczekiwany wynik |
+| --- | --- |
+| Połączenie → Zapisz i testuj | „API odpowiedziało”, bez błędu autoryzacji lub limitu. |
+| Live, pytanie głosem | Wskaźnik mikrofonu reaguje; pojawiają się transkrypcja i słyszalna odpowiedź. |
+| Zdjęcia, charakterystyczny obraz i pytanie | Model odnosi się do właściwego zdjęcia; można usunąć załączniki. |
+| Ekran, zgoda systemu, przejście do gry | Klatka przedstawia aktualny widok gry; w Live wzrasta licznik klatek potwierdzonych przez OpenAI. |
+| Pytanie o nowy widok | Odpowiedź odnosi się do zmiany obrazu, nie tylko do poprzedniej klatki. |
+| Przycisk Meta i uruchomienie Mini | Mały panel można otworzyć; zachowuje rozmowę i pozwala zatrzymać obie usługi. |
+| Przerwij podczas odpowiedzi | Dźwięk kończy się bez odtwarzania reszty starej odpowiedzi. |
+| Stop ekran, Stop Live | Znika przechwycony obraz, mikrofon przestaje działać. Nowa projekcja wymaga zgody. |
+
+W razie problemu zapisz wersję Horizon OS, nazwę gry i dokładny komunikat ze „Sprawdź działanie”. Sam wskaźnik aktywnej usługi nie potwierdza odbioru obrazu ani odpowiedzi przez OpenAI.
 
 ## Budowanie i podpis
 

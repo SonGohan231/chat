@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "QuestGPT"
 include(":app")
+include(":reborn")

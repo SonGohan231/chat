@@ -1,15 +1,19 @@
 package pl.somaskan.questgpt2
 
 import android.content.Intent
+import android.view.View
+import android.view.WindowInsets
+import android.widget.Button
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class PanelSmokeTest {
@@ -19,15 +23,34 @@ class PanelSmokeTest {
         device.executeShellCommand("mkdir -p /sdcard/Download/questgpt2")
         device.executeShellCommand("screencap -p /sdcard/Download/questgpt2/$name.png")
     }
+    private fun assertComposerAboveSystemBar() {
+        device.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val panel = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                .filterIsInstance<PanelActivity>().first()
+            val decor = panel.window.decorView
+            val found = arrayListOf<View>()
+            decor.findViewsWithText(found, "Wyślij", View.FIND_VIEWS_WITH_TEXT)
+            val send = found.filterIsInstance<Button>().first()
+            val position = IntArray(2)
+            send.getLocationOnScreen(position)
+            val safe = decor.rootWindowInsets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            val bottom = panel.windowManager.currentWindowMetrics.bounds.bottom - safe.bottom
+            assertTrue("The whole send button must be above the system bar", position[1] + send.height <= bottom)
+            assertTrue("The send button must keep a usable touch area", send.height >= 48 * context.resources.displayMetrics.density)
+        }
+    }
     @Test fun nativePanelsLaunchAndKeepSharedConversation() {
         context.startActivity(Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
         assertTrue(device.wait(Until.hasObject(By.text("QuestGPT 2")),10000))
         assertTrue(device.hasObject(By.text("Wyślij")))
         assertTrue(device.hasObject(By.text("Live")))
+        assertComposerAboveSystemBar()
         capture("main")
         device.findObject(By.text("Mini")).click()
         assertTrue(device.wait(Until.hasObject(By.text("QuestGPT · Mini")),8000))
         assertTrue(device.hasObject(By.text("Wyślij")))
+        assertComposerAboveSystemBar()
         capture("mini")
         device.findObject(By.text("Live")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Połączenie")),5000))

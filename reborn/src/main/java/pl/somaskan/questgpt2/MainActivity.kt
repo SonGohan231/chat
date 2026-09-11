@@ -31,6 +31,9 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.Executors
@@ -68,8 +71,16 @@ open class PanelActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         val root = column().apply { setBackgroundColor(bg); setPadding(dp(20),dp(14),dp(20),dp(12)) }
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(dp(20) + safe.left, dp(14) + safe.top,
+                dp(20) + safe.right, dp(12) + maxOf(safe.bottom, keyboard.bottom))
+            insets
+        }
         val header = row()
         header.addView(label(if(mini) "QuestGPT · Mini" else "QuestGPT 2", if(mini) 24f else 29f, true), LinearLayout.LayoutParams(0,dp(48),1f))
         header.addView(button(if(mini) "Otwórz" else "Mini") { switchPanel() })
@@ -113,6 +124,7 @@ open class PanelActivity : Activity() {
         root.addView(composer)
         if(!mini) root.addView(label("Mów w Live lub dołącz obraz. Udostępnianie ekranu zawsze wymaga zgody systemu.",14f).apply {setTextColor(muted)})
         setContentView(root)
+        ViewCompat.requestApplyInsets(root)
         if(Hub.state.messages.isEmpty()) Hub.message("guide", "Cześć! Możesz ze mną pisać, rozmawiać i pokazywać obrazy.\n\nZacznij od ⋯ → Połączenie: zapisz własny klucz OpenAI API i wykonaj test. Potem włącz Live oraz Ekran.\n\nMini panel otworzysz przyciskiem Mini albo z menu Questa podczas gry.")
         receiveShare(intent)
         Updates.check()

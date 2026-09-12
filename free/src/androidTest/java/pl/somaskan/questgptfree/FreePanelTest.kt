@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.net.Uri
 import android.webkit.PermissionRequest
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -20,6 +22,7 @@ import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
+import java.io.ByteArrayInputStream
 
 @RunWith(AndroidJUnit4::class)
 class FreePanelTest {
@@ -75,7 +78,9 @@ class FreePanelTest {
         start()
         val before=SnapshotStore.latest(context)
         device.findObject(By.text("Zrzut za 5 s")).click()
-        device.findObject(By.res("android","button1")).click()
+        val proceed=device.wait(Until.findObject(By.res("android","button1")),5000)
+        assertNotNull("The app's explanation must be visible before accepting",proceed)
+        proceed.click()
         val consent=device.wait(Until.findObject(By.text(Pattern.compile("(?i)start now|start recording|start"))),8000)
         assertNotNull("Android must ask for screen consent",consent)
         consent.click()
@@ -103,16 +108,18 @@ class FreePanelTest {
             panel=ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<FreePanelActivity>().first()
             val w=panel.web!!
             w.stopLoading()
+            val fixture="""<html><meta name="viewport" content="width=device-width"><body style="background:#122233;color:white;font:28px sans-serif"><p>TEST PLIKU</p><button style="font:28px sans-serif" onclick="document.getElementById('file').click()">DOŁĄCZ ZRZUT</button><input hidden id="file" type="file" accept="image/*" onchange="document.getElementById('result').textContent=this.files[0]?'ZAŁĄCZONO':'BRAK'"><p id="result">BRAK</p></body></html>"""
             w.webViewClient=object: WebViewClient() {
+                override fun shouldInterceptRequest(view: android.webkit.WebView,request: WebResourceRequest): WebResourceResponse =
+                    WebResourceResponse("text/html","UTF-8",ByteArrayInputStream(fixture.toByteArray(Charsets.UTF_8)))
                 override fun onPageFinished(view: android.webkit.WebView,url: String?) {ready.countDown()}
             }
-            // Isolated HTML fixture; does not log in, post to ChatGPT or call any model.
-            w.loadDataWithBaseURL("https://chatgpt.com/__questgpt_test__/",
-                """<html><meta name="viewport" content="width=device-width"><body style="background:#122233;color:white;font:28px sans-serif"><p>TEST PLIKU</p><button style="font:28px sans-serif" onclick="document.getElementById('file').click()">DOŁĄCZ ZRZUT</button><input hidden id="file" type="file" accept="image/*" onchange="document.getElementById('result').textContent=this.files[0]?'ZAŁĄCZONO':'BRAK'"><p id="result">BRAK</p></body></html>""",
-                "text/html","UTF-8",null)
+            // All requests are intercepted with an isolated fixture. No login or model call.
+            w.loadUrl("https://chatgpt.com/__questgpt_test__/")
         }
         assertTrue(ready.await(15,TimeUnit.SECONDS))
         instrumentation.runOnMainSync {
+            assertEquals("https://chatgpt.com/__questgpt_test__/",panel.web!!.url)
             var denied=false
             val foreign=object: PermissionRequest() {
                 override fun getOrigin()=Uri.parse("https://evil.test")
@@ -126,7 +133,9 @@ class FreePanelTest {
         val attach=device.wait(Until.findObject(By.text("DOŁĄCZ ZRZUT")),8000)
         assertNotNull(attach)
         attach.click()
-        assertTrue(device.wait(Until.hasObject(By.text("Dołącz plik w ChatGPT")),8000))
+        val chooserVisible=device.wait(Until.hasObject(By.text("Dołącz plik w ChatGPT")),8000)
+        capture("free-file-picker")
+        assertTrue("Selecting a file must show the native chooser",chooserVisible)
         device.findObject(By.text("Ostatni zrzut Questa")).click()
         assertTrue(device.wait(Until.hasObject(By.text("ZAŁĄCZONO")),8000))
         capture("free-file-attachment-fixture")

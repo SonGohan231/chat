@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:horizonos="http://schemas.horizonos/sdk">
+    <horizonos:uses-horizonos-sdk horizonos:minSdkVersion="69" horizonos:targetSdkVersion="76" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <queries><intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent></queries>
+    <application android:allowBackup="false" android:usesCleartextTraffic="false"
+        android:label="QuestGPT Free" android:icon="@drawable/ic_free" android:theme="@style/AppTheme">
+        <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s" />
+        <activity android:name=".MainActivity" android:exported="true" android:resizeableActivity="true"
+            android:launchMode="singleTask" android:windowSoftInputMode="adjustResize">
+            <layout android:defaultWidth="940dp" android:defaultHeight="760dp" android:minWidth="360dp" android:minHeight="400dp" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.oculus.intent.category.2D" />
+                <category android:name="com.oculus.intent.category.VR_HOME_LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".MiniActivity" android:exported="true" android:resizeableActivity="true"
+            android:launchMode="singleTask" android:taskAffinity="pl.somaskan.questgptfree.mini"
+            android:label="QuestGPT Free · Mini" android:windowSoftInputMode="adjustResize">
+            <layout android:defaultWidth="480dp" android:defaultHeight="600dp" android:minWidth="360dp" android:minHeight="400dp" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.oculus.intent.category.2D" />
+                <category android:name="com.oculus.intent.category.OVERLAY_LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name=".SnapshotService" android:exported="false" android:foregroundServiceType="mediaProjection" />
+    </application>
+</manifest>

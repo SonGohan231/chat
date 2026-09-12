@@ -1,0 +1,51 @@
+name: QuestGPT Free - build and Android tests
+on:
+  push:
+    branches: ['rebuild/questgpt2-*']
+    paths: ['free/**', '.github/workflows/questgpt-free.yml', 'scripts/test-questgpt-free.sh']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build Free and test URL trust boundaries
+        run: gradle :free:testDebugUnitTest :free:assembleDebug :free:assembleRelease :free:lintDebug --stacktrace
+      - name: Prepare unsigned release
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -P 16 -f 4 free/build/outputs/apk/release/free-release-unsigned.apk QuestGPT-Free-aligned.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuestGPT-Free-unsigned-apk
+          path: QuestGPT-Free-aligned.apk
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android Free tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_c
+          disable-animations: true
+          script: bash scripts/test-questgpt-free.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: QuestGPT-Free-test-evidence
+          path: |
+            screenshots-free/
+            free/build/reports/
+            free/build/outputs/androidTest-results/

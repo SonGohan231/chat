@@ -54,7 +54,7 @@ class CameraService : Service() {
             Hub.screenService?.stopCapture()
             Hub.voiceService?.clearScreenContext("Zmieniono źródło na kamerę otoczenia. Czekaj na świeże zdjęcie.")
             Hub.change { it.copy(cameraActive = true, cameraFrame = null, visionSource = VisionSource.CAMERA,
-                cameraStatus = "Otwieram kamerę otoczenia…", sentFrames = 0, lastSentAt = 0) }
+                cameraStatus = "Otwieram kamerę otoczenia…", note = "", sentFrames = 0, lastSentAt = 0) }
             startedAt = SystemClock.elapsedRealtime()
             worker.post { runCatching { open() }.onFailure { fail(it.message.orEmpty()) } }
             worker.postDelayed(watchdog, 2500)

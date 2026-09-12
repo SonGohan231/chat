@@ -9,6 +9,7 @@ import com.meta.spatial.core.SpatialFeature
 import com.meta.spatial.core.SystemBase
 import com.meta.spatial.core.Vector3
 import com.meta.spatial.runtime.PanelConfigOptions
+import com.meta.spatial.runtime.PanelShapeLayerBlendType
 import com.meta.spatial.runtime.ReferenceSpace
 import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.DpPerMeterDisplayOptions
@@ -34,7 +35,7 @@ class ImmersiveActivity : AppSystemActivity() {
     @Volatile private var ready = false
     @Volatile private var followPanel = false
     private var cameraNoticeShown = false
-    private var focused = true
+    private var shownCompact: Boolean? = null
 
     override fun registerFeatures(): List<SpatialFeature> = listOf(VRFeature(this))
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,15 +44,18 @@ class ImmersiveActivity : AppSystemActivity() {
         systemManager.registerSystem(object : SystemBase() {
             override fun execute() {
                 if (!ready) return
-                val viewer = scene.getViewerPose()
+                val viewer = if (compact || reposition || followPanel) scene.getViewerPose() else null
                 // The compact controls stay at the lower-right edge as the wearer turns.
-                icon?.setComponent(Transform(viewer * Pose(Vector3(0.34f, -0.21f, 1.05f))))
-                if (reposition || followPanel) {
+                if (compact && viewer != null) icon?.setComponent(Transform(viewer * Pose(Vector3(0.34f, -0.21f, 1.05f))))
+                if ((reposition || followPanel) && viewer != null) {
                     panel?.setComponent(Transform(viewer * Pose(Vector3(0.28f, -0.08f, 1.25f))))
                     reposition = false
                 }
-                panel?.setComponent(Visible(!compact))
-                icon?.setComponent(Visible(compact))
+                if (shownCompact != compact) {
+                    panel?.setComponent(Visible(!compact))
+                    icon?.setComponent(Visible(compact))
+                    shownCompact = compact
+                }
             }
         })
     }
@@ -90,7 +94,10 @@ class ImmersiveActivity : AppSystemActivity() {
                     shape = QuadShapeOptions(if (small) 0.22f else 0.80f, if (small) 0.10f else 0.91f),
                     display = DpPerMeterDisplayOptions(dpPerMeter = 800f),
                     style = PanelStyleOptions(themeResourceId = R.style.TransparentTheme)
-                ).toPanelConfigOptions().apply { enableTransparent = true; includeGlass = false }
+                ).toPanelConfigOptions().apply {
+                    enableTransparent = true; includeGlass = false
+                    layerBlendType = PanelShapeLayerBlendType.ALPHA_BLEND
+                }
             }
         }
     )

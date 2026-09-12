@@ -12,7 +12,8 @@ import androidx.core.view.WindowInsetsCompat
 
 /** Compact 2D companion for the Quest system panel; MR is handled by ImmersiveActivity. */
 class EnvironmentActivity : Activity() {
-    private val controller by lazy { EnvironmentController(this) }
+    private val controller by lazy { EnvironmentController(this) { accept -> panelView.showCameraExplanation(accept) } }
+    private lateinit var panelView: EnvironmentView
     private lateinit var root: FrameLayout
     private var compact = false
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,7 +34,8 @@ class EnvironmentActivity : Activity() {
             { startActivity(Intent(this, MainActivity::class.java)); finish() },
             { if (QuestRuntime.isQuest(this)) QuestRuntime.openEnvironment(this) else Hub.note("Tryb MR wymaga Meta Quest 3 lub 3S. Ten panel pokazuje podgląd Camera2.") },
             { Hub.stopAll(); finish() })
-        root.addView(EnvironmentView(this, compact, actions), FrameLayout.LayoutParams(if (compact) -2 else -1, if (compact) -2 else -1, Gravity.TOP or Gravity.END))
+        panelView = EnvironmentView(this, compact, actions)
+        root.addView(panelView, FrameLayout.LayoutParams(if (compact) -2 else -1, if (compact) -2 else -1, Gravity.TOP or Gravity.END))
     }
     override fun onSaveInstanceState(out: Bundle) { out.putBoolean("compact", compact); super.onSaveInstanceState(out) }
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {

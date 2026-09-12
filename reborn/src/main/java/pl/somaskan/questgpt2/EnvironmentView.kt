@@ -38,6 +38,27 @@ class EnvironmentView(context: Context, private val compact: Boolean, private va
     private val mute = button("Wycisz") { Hub.voiceService?.mute() ?: Hub.note("Najpierw włącz Live.") }
     private val icon = button("AI ●", actions.restore).apply { contentDescription = "Rozwiń menu QuestGPT" }
     private val observer: () -> Unit = { render() }
+    private var cameraExplanation: View? = null
+
+    /** Render consent inside the same VR texture as the controls, without a separate 2D window. */
+    fun showCameraExplanation(accept: () -> Unit) {
+        cameraExplanation?.let { removeView(it) }
+        val card = column().apply {
+            background = shape(0xf0141d2e.toInt())
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            isClickable = true; isFocusable = true
+        }
+        card.addView(text("Pokaż otoczenie asystentowi", 25f, true))
+        val explanation = text("Kamera RGB gogli pokaże fizyczne otoczenie. W Live do OpenAI trafi zdjęcie co około 2 sekundy oraz przy pytaniu. Bez Live obraz zostaje lokalnie do chwili wysłania pytania. Obrazy zużywają środki API.\n\nPrzycisk Kamera wyłącza udostępnianie. Stop wszystko kończy kamerę, mikrofon i ekran. Passthrough dla Ciebie może nadal pozostać widoczny.", 19f)
+        card.addView(ScrollView(context).apply { addView(explanation) }, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(20); bottomMargin = dp(20) })
+        fun dismiss() { removeView(card); cameraExplanation = null }
+        val buttons = row()
+        buttons.addView(button("Anuluj") { dismiss() }, LinearLayout.LayoutParams(0, dp(60), 1f).apply { marginEnd = dp(8) })
+        buttons.addView(button("Włącz kamerę") { dismiss(); accept() }, LinearLayout.LayoutParams(0, dp(60), 1f))
+        card.addView(buttons)
+        cameraExplanation = card
+        addView(card, LayoutParams(-1, -1))
+    }
 
     init {
         setBackgroundColor(Color.TRANSPARENT)

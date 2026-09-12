@@ -1,7 +1,6 @@
 package pl.somaskan.questgpt2
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -22,17 +21,14 @@ object QuestRuntime {
     }
 }
 
-class EnvironmentController(private val activity: Activity) {
+class EnvironmentController(private val activity: Activity, private val explainCamera: (() -> Unit) -> Unit) {
     private var pendingCamera = false
     private var pendingVoice = false
     fun camera() {
         if (Hub.state.cameraActive) { Hub.cameraService?.stopCamera(); return }
         val prefs = activity.getSharedPreferences("questgpt2_ui", 0)
         if (!prefs.getBoolean("camera_explained", false)) {
-            AlertDialog.Builder(activity).setTitle("Pokaż otoczenie asystentowi")
-                .setMessage("Kamera RGB gogli pokaże fizyczne otoczenie. W Live do OpenAI trafi zdjęcie co około 2 sekundy oraz przy pytaniu. Bez Live obraz zostaje lokalnie do chwili wysłania pytania. Obrazy zużywają środki API.\n\nPrzycisk Kamera wyłącza udostępnianie. Stop wszystko kończy kamerę, mikrofon i ekran. Passthrough dla Ciebie może nadal pozostać widoczny.")
-                .setPositiveButton("Włącz kamerę") { _, _ -> prefs.edit().putBoolean("camera_explained", true).apply(); cameraPermission() }
-                .setNegativeButton("Anuluj", null).show()
+            explainCamera { prefs.edit().putBoolean("camera_explained", true).apply(); cameraPermission() }
         } else cameraPermission()
     }
     private fun cameraPermission() {

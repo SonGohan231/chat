@@ -31,7 +31,7 @@ class EnvironmentSmokeTest {
         launch()
         device.findObject(By.text("Kamera")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Pokaż otoczenie asystentowi")), 5000))
-        val cancel = device.wait(Until.findObject(By.res("android", "button2")), 3000)
+        val cancel = device.wait(Until.findObject(By.text("Anuluj")), 3000)
         assertNotNull(cancel); cancel.click()
         assertFalse(Hub.state.cameraActive); assertNull(Hub.state.cameraFrame)
     }
@@ -39,7 +39,7 @@ class EnvironmentSmokeTest {
         launch()
         device.findObject(By.text("Kamera")).click()
         if (device.wait(Until.hasObject(By.text("Pokaż otoczenie asystentowi")), 1500)) {
-            device.wait(Until.findObject(By.res("android", "button1")), 3000).click()
+            device.wait(Until.findObject(By.text("Włącz kamerę")), 3000).click()
         }
         if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             val selector = By.res("com.android.permissioncontroller", "permission_allow_foreground_only_button")

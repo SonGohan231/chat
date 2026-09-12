@@ -27,14 +27,14 @@ import com.meta.spatial.vr.VRFeature
 
 /** Native Meta passthrough supplies the stereoscopic world; Camera2 supplies RGB frames to AI. */
 class ImmersiveActivity : AppSystemActivity() {
-    private val controls by lazy { EnvironmentController(this) }
+    private var environmentView: EnvironmentView? = null
+    private val controls by lazy { EnvironmentController(this) { accept -> environmentView?.showCameraExplanation(accept) } }
     private var panel: Entity? = null
     private var icon: Entity? = null
     @Volatile private var compact = false
     @Volatile private var reposition = true
     @Volatile private var ready = false
     @Volatile private var followPanel = false
-    private var cameraNoticeShown = false
     private var shownCompact: Boolean? = null
 
     override fun registerFeatures(): List<SpatialFeature> = listOf(VRFeature(this))
@@ -68,13 +68,6 @@ class ImmersiveActivity : AppSystemActivity() {
         panel = Entity.create(listOf(Panel(R.id.environment_panel), Transform(Pose(Vector3(0f, 1.3f, 1.2f))), Visible(!compact)))
         icon = Entity.create(listOf(Panel(R.id.environment_icon), Transform(Pose(Vector3(0.3f, 1.2f, 1f))), Visible(compact)))
         reposition = true; ready = true
-        runOnUiThread {
-            if (!cameraNoticeShown && !isFinishing && !Hub.state.cameraActive) {
-                cameraNoticeShown = true
-                // Explicit explanation / OS permission before any frames can leave the headset.
-                controls.camera()
-            }
-        }
     }
     override fun registerPanels(): List<PanelRegistration> = listOf(registration(false), registration(true))
     private fun registration(small: Boolean): PanelRegistration = ViewPanelRegistration(
@@ -86,7 +79,7 @@ class ImmersiveActivity : AppSystemActivity() {
                 { launchHomePanel() },
                 { followPanel = !followPanel; reposition = true; Hub.note(if (followPanel) "Panel podąża za wzrokiem. Naciśnij Ustaw widok, aby go przypiąć." else "Panel przypięty przed Tobą; ikona zawsze podąża za wzrokiem.") },
                 { Hub.stopAll(); launchHomePanel() }
-            ))
+            )).also { if (!small) environmentView = it }
         },
         settingsCreator = {
             object : PanelSettings {
@@ -121,6 +114,7 @@ class ImmersiveActivity : AppSystemActivity() {
     override fun onSaveInstanceState(outState: Bundle) { outState.putBoolean("compact", compact); super.onSaveInstanceState(outState) }
     override fun onSpatialShutdown() {
         ready = false
+        environmentView = null
         Hub.cameraService?.stopCamera()
         panel?.destroy(); panel = null; icon?.destroy(); icon = null
         super.onSpatialShutdown()

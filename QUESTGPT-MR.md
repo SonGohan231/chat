@@ -7,7 +7,7 @@ Aktualizacja płatnej wersji API, pakiet `pl.somaskan.questgpt2`. Ten sam podpis
 1. Zainstaluj APK jako aktualizację QuestGPT 2. Gogle muszą mieć aktualny Horizon OS z Androidem 14 (API 34) lub nowszym. Samo API kamer Meta jest dostępne od Horizon OS v74; ta kompilacja ma minimum Android API 34.
 2. Jeśli klucz nie był zapisany: `⋯ → Połączenie` i test odpowiedzi API. Opłaty API są niezależne od ChatGPT Plus.
 3. Naciśnij `Otoczenie` albo otwórz ikonę `QuestGPT · Otoczenie MR` w bibliotece Questa.
-4. Potwierdź opis udostępniania i zgodę systemu na kamerę. Własny widok MR włącza natywny passthrough. Kamera dla AI ma oddzielne sterowanie.
+4. Naciśnij `Kamera`. Potwierdź opis udostępniania na panelu MR i zgodę systemu na kamerę. Własny widok MR włącza natywny passthrough. Kamera dla AI ma oddzielne sterowanie.
 5. Poczekaj, aż podgląd pokaże otoczenie; następnie włącz `Live` i zezwól na mikrofon. Zapytaj np. „Co widzisz przede mną?” lub „Przeczytaj tę etykietę”.
 6. `−` zwija panel do małej ikony AI i przycisku Stop. Ikona podąża za głową, w dolnej prawej części widoku MR. Kliknięcie AI przywraca panel przed użytkownikiem.
 7. `Ustaw widok` przełącza panel między przypięciem przed użytkownikiem i podążaniem za głową. `Stop kamera` usuwa bieżący obraz AI, `Wycisz` dotyczy mikrofonu, `Stop wszystko` kończy kamerę, mikrofon i przechwytywanie ekranu.

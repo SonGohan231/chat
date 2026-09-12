@@ -1,6 +1,8 @@
 package pl.somaskan.questgpt2
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.os.SystemClock
 import android.util.Base64
@@ -39,9 +41,23 @@ class EnvironmentSmokeTest {
         if (device.wait(Until.hasObject(By.text("Pokaż otoczenie asystentowi")), 1500)) {
             device.wait(Until.findObject(By.res("android", "button1")), 3000).click()
         }
-        val allow = device.wait(Until.findObject(By.res("com.android.permissioncontroller", "permission_allow_foreground_only_button")), 4000)
-        allow?.click()
-        assertTrue("A real camera frame should reach the visible panel", device.wait(Until.hasObject(By.textContains("Kamera otoczenia ·")), 15000))
+        if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            val selector = By.res("com.android.permissioncontroller", "permission_allow_foreground_only_button")
+            assertNotNull("Android must display camera consent", device.wait(Until.findObject(selector), 10000))
+            // On a cold emulator the permission sheet can move after its node first appears.
+            // Reacquire the visible button after settling; never grant permission through adb.
+            repeat(2) {
+                if (device.hasObject(selector)) {
+                    device.waitForIdle(3000)
+                    device.findObject(selector)?.clickAndWait(Until.gone(selector), 5000)
+                }
+            }
+            assertTrue("Camera consent must be accepted before waiting for frames", device.wait(Until.gone(selector), 5000))
+            assertEquals(PackageManager.PERMISSION_GRANTED, context.checkSelfPermission(Manifest.permission.CAMERA))
+        }
+        val shown = device.wait(Until.hasObject(By.textContains("Kamera otoczenia ·")), 15000)
+        if (!shown) capture("environment-camera-failure")
+        assertTrue("A real camera frame should reach the visible panel: ${Hub.state.cameraStatus}", shown)
         val f = Hub.state.activeFrame(SystemClock.elapsedRealtime())
         assertNotNull(f); assertEquals(VisionSource.CAMERA, f!!.source); assertFalse(f.blank)
         val bytes = Base64.decode(f.dataUrl.substringAfter(','), Base64.DEFAULT)

@@ -23,7 +23,12 @@ android {
         getByName("release") { ndk { abiFilters += "arm64-v8a" } }
     }
     buildFeatures { buildConfig = true }
-    packaging { resources.excludes.add("META-INF/LICENSE") }
+    packaging {
+        resources.excludes.add("META-INF/LICENSE")
+        // Compress the sizeable Meta native renderer for faster APK downloads.
+        // Android extracts these libraries on install before loading them.
+        jniLibs.useLegacyPackaging = true
+    }
     lint { abortOnError = true }
 }
 

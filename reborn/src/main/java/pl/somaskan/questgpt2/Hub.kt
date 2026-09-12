@@ -19,8 +19,15 @@ data class State(
     val voiceReady: Boolean = false, val muted: Boolean = false, val micLevel: Int = 0,
     val capture: String = "Ekran nieudostępniany", val sharing: Boolean = false,
     val frame: Frame? = null, val snapshot: Frame? = null, val snapshotPending: Boolean = false, val sentFrames: Int = 0, val lastSentAt: Long = 0,
-    val note: String = "", val apiTest: String = "Połączenie niesprawdzone"
-)
+    val note: String = "", val apiTest: String = "Połączenie niesprawdzone",
+    val cameraActive: Boolean = false, val cameraFrame: Frame? = null,
+    val cameraStatus: String = "Kamera wyłączona", val visionSource: VisionSource = VisionSource.SCREEN
+) {
+    fun visionActive() = if (visionSource == VisionSource.CAMERA) cameraActive else sharing
+    fun activeFrame(now: Long): Frame? = (if (visionSource == VisionSource.CAMERA && cameraActive) cameraFrame
+        else if (visionSource == VisionSource.SCREEN && sharing) frame else null)?.takeIf { Protocol.fresh(it, now) }
+    fun visionStatus() = if (visionSource == VisionSource.CAMERA) cameraStatus else capture
+}
 
 object Hub {
     private lateinit var context: Context
@@ -29,6 +36,7 @@ object Hub {
     @Volatile var state = State(); private set
     @Volatile var voiceService: VoiceService? = null
     @Volatile var screenService: ScreenService? = null
+    @Volatile var cameraService: CameraService? = null
     @Volatile var textCall: okhttp3.Call? = null
     fun init(context: Context) {
         this.context = context.applicationContext
@@ -56,6 +64,11 @@ object Hub {
     }
     fun complete(id: String) { change { s -> s.copy(messages = s.messages.map { if (it.id == id) it.copy(complete = true) else it }) }; save() }
     fun clear() { textCall?.cancel(); textCall=null; voiceService?.stopVoice(); change { it.copy(messages = emptyList(), snapshot = null, note = "Nowa rozmowa", busy = false) }; save() }
+    fun stopAll() {
+        voiceService?.stopVoice(); screenService?.stopCapture(); cameraService?.stopCamera()
+        textCall?.cancel(); textCall = null
+        change { it.copy(busy = false, cameraFrame = null, frame = null, note = "Mikrofon, kamera i ekran zatrzymane.") }
+    }
     @Synchronized private fun save() {
         val array = JSONArray()
         state.messages.filter { it.complete }.forEach { array.put(JSONObject().put("id", it.id).put("role", it.role).put("text", it.text)) }

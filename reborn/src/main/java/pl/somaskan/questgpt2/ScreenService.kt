@@ -42,6 +42,7 @@ class ScreenService : Service() {
         if(intent == null || intent.action == "STOP") { stopCapture(); return START_NOT_STICKY }
         if(projection != null) return START_NOT_STICKY
         try {
+            Hub.cameraService?.stopCamera()
             startForeground(201, Notifications.build(this, "QuestGPT · udostępnianie ekranu", "Obraz może być wysyłany do OpenAI podczas Live."), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             @Suppress("DEPRECATION")
             val consent = intent.getParcelableExtra<Intent>("consent") ?: error("Brak zgody na ekran")
@@ -61,7 +62,7 @@ class ScreenService : Service() {
             display = p.createVirtualDisplay("QuestGPT user-approved screen share", w, h, resources.configuration.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, worker)
             startedAt = SystemClock.elapsedRealtime()
-            Hub.change { it.copy(sharing = true, capture = "Czekam na pierwszą klatkę…", frame = null, sentFrames = 0, lastSentAt = 0) }
+            Hub.change { it.copy(sharing = true, visionSource = VisionSource.SCREEN, capture = "Czekam na pierwszą klatkę…", frame = null, sentFrames = 0, lastSentAt = 0) }
             worker.postDelayed(watchdog, 3000)
             if(intent.getBooleanExtra("snapshot",false)) scheduleSnapshot()
         } catch(e: Exception) { stopCapture("Nie udało się udostępnić ekranu: ${Protocol.safe(e.message.orEmpty())}") }

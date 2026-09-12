@@ -18,7 +18,7 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.13'
       - name: Build and protocol tests
         run: gradle :reborn:testDebugUnitTest :reborn:assembleDebug :reborn:assembleRelease :reborn:lintDebug --stacktrace
       - name: Prepare unsigned release for private signing
@@ -43,6 +43,7 @@ jobs:
           arch: x86_64
           profile: pixel_c
           disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back emulated -camera-front none
           script: bash scripts/test-questgpt2.sh
       - uses: actions/upload-artifact@v4
         if: always()

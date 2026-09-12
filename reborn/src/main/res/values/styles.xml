@@ -10,4 +10,13 @@
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowSoftInputMode">adjustResize</item>
     </style>
+    <style name="TransparentTheme" parent="AppTheme">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <item name="environment_panel" type="id" />
+    <item name="environment_icon" type="id" />
 </resources>

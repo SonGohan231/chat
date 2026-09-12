@@ -69,6 +69,7 @@ open class PanelActivity : Activity() {
     private var permissionAction: String? = null
     private var takeSnapshotAfterConsent = false
     private val preferences by lazy { getSharedPreferences("questgpt2_ui",0) }
+    private val environment by lazy { EnvironmentController(this) }
     private var startupChecked = false
     private val io = Executors.newSingleThreadExecutor()
     private val observer: () -> Unit = { if(!isDestroyed) render() }
@@ -119,6 +120,8 @@ open class PanelActivity : Activity() {
         controls(button("Wycisz") { Hub.voiceService?.mute() ?: Hub.note("Najpierw włącz Live.") },
             button("Przerwij") { Hub.voiceService?.interrupt(); Hub.textCall?.cancel() },
             button("Widok") { viewActions() })
+        controls(button("Otoczenie") { QuestRuntime.openEnvironment(this) },
+            button("Skróty") { shortcuts() }, button("Stop wszystko") { Hub.stopAll() })
         val composer = row()
         draft = EditText(this).apply {
             setTextColor(white); setHintTextColor(muted); hint = "Zapytaj o cokolwiek…"
@@ -137,7 +140,7 @@ open class PanelActivity : Activity() {
         if(!mini) root.addView(label("Mów w Live lub dołącz obraz. Udostępnianie ekranu zawsze wymaga zgody systemu.",14f).apply {setTextColor(muted)})
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
-        if(Hub.state.messages.isEmpty()) Hub.message("guide", "Cześć! Możesz ze mną pisać, rozmawiać i pokazywać obrazy.\n\nZacznij od ⋯ → Połączenie: zapisz własny klucz OpenAI API i wykonaj test. Potem włącz Live oraz Ekran.\n\nMini panel ma też własną ikonę w bibliotece Questa. Widok pozwala zapytać o ekran lub zrobić zrzut za 5 sekund.")
+        if(Hub.state.messages.isEmpty()) Hub.message("guide", "Cześć! Możesz ze mną pisać, rozmawiać i pokazywać obrazy.\n\nZacznij od ⋯ → Połączenie: zapisz własny klucz OpenAI API i wykonaj test. Potem wybierz Otoczenie, aby pokazać świat przez kamerę, albo Live + Ekran, aby pokazać grę.\n\nMini panel ma też własną ikonę w bibliotece Questa. Widok pozwala zapytać o ekran lub zrobić zrzut za 5 sekund.")
         receiveShare(intent)
         Updates.check()
     }
@@ -161,7 +164,7 @@ open class PanelActivity : Activity() {
     private fun render() {
         val s = Hub.state
         val age = if(s.lastSentAt > 0) " · OpenAI: ${s.sentFrames} klatek" else ""
-        status.text = "${s.voice}\n${s.capture}$age"
+        status.text = "${s.voice}\n${s.visionStatus()}$age"
         status.maxLines=if(mini) 3 else 4
         meter.progress = s.micLevel
         live.text = if(s.voiceActive) "Stop Live" else "Live"
@@ -193,14 +196,16 @@ open class PanelActivity : Activity() {
         val typed=draft.text.toString().trim()
         val prompt=typed.ifBlank { if(Draft.images.isNotEmpty()) "Co widzisz na załączonym obrazie?" else "" }
         if(prompt.isBlank()) return
-        val freshScreen=Hub.state.frame?.takeIf { Hub.state.sharing && Protocol.fresh(it,SystemClock.elapsedRealtime()) }
+        val freshScreen=Hub.state.activeFrame(SystemClock.elapsedRealtime())
         val images = when {
             Draft.images.isNotEmpty() -> Draft.images.toList().also { Draft.referenceImages=it }
             freshScreen != null && !Hub.state.voiceActive -> listOf(freshScreen.dataUrl)
             Hub.state.voiceActive -> emptyList()
             else -> Draft.referenceImages
         }
-        if(!Api.ask(this,prompt,images)) return
+        val contextualPrompt = if (freshScreen != null && Draft.images.isEmpty() && !Hub.state.voiceActive)
+            Protocol.frameCaption(freshScreen) + "\n" + prompt else prompt
+        if(!Api.ask(this,contextualPrompt,images)) return
         draft.text.clear(); Draft.text=""; Draft.images.clear(); renderAttachments()
     }
     private fun toggleVoice() {
@@ -227,6 +232,7 @@ open class PanelActivity : Activity() {
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode,permissions,grantResults)
+        if (environment.permissionResult(requestCode, grantResults)) return
         if(requestCode==10 && permissionAction=="voice") {
             permissionAction=null
             if(grantResults.firstOrNull()==PackageManager.PERMISSION_GRANTED) toggleVoice()
@@ -302,8 +308,8 @@ open class PanelActivity : Activity() {
         }
     }
     private fun previewFrame() {
-        val frame=Hub.state.snapshot ?: Hub.state.frame
-        if(frame==null) { Hub.note("Najpierw włącz Ekran. Potem przejdź do gry i wróć do tego panelu."); return }
+        val frame=if (Hub.state.visionSource == VisionSource.CAMERA) Hub.state.activeFrame(SystemClock.elapsedRealtime()) else Hub.state.snapshot ?: Hub.state.frame
+        if(frame==null) { Hub.note("Włącz Otoczenie / Kamerę albo Ekran i poczekaj na świeży obraz."); return }
         val content=column().apply {setPadding(dp(18),dp(8),dp(18),dp(10))}
         content.addView(ImageView(this).apply {setImageBitmap(bitmap(frame.dataUrl));adjustViewBounds=true;contentDescription="Rzeczywista przechwycona klatka"},LinearLayout.LayoutParams(-1,dp(220)))
         content.addView(label("Klatka ${frame.sequence} · wiek ${(SystemClock.elapsedRealtime()-frame.at)/1000}s" + if(frame.blank) "\nObraz jest ciemny/pusty. Może być chroniony." else "",16f))
@@ -317,8 +323,8 @@ open class PanelActivity : Activity() {
             .setItems(arrayOf("Zapytaj o aktualny widok", "Podgląd / dołącz klatkę", "Zrzut za 5 sekund")) { _,which ->
                 when(which) {
                     0 -> {
-                        val frame=Hub.state.frame
-                        if(!Hub.state.sharing || !Protocol.fresh(frame,SystemClock.elapsedRealtime()) || frame==null)
+                        val frame=Hub.state.activeFrame(SystemClock.elapsedRealtime())
+                        if(frame==null)
                             Hub.note("Włącz Ekran i poczekaj na świeżą klatkę. Możesz też wybrać Zdjęcia.")
                         else askAboutFrame(frame,false)
                     }
@@ -333,8 +339,8 @@ open class PanelActivity : Activity() {
     private fun askAboutFrame(frame: Frame, frozen: Boolean) {
         if(frame.blank) { Hub.note("Klatka jest pusta lub chroniona. Wybierz inny widok."); return }
         if(!CredentialStore(this).hasKey()) { connection(); return }
-        val prompt=if(frozen) "Opisz ten zapisany zrzut ekranu. Co na nim widać?" else "Co widzisz na udostępnianym właśnie ekranie?"
-        Api.ask(this,prompt,listOf(frame.dataUrl))
+        val prompt=if(frozen) "Opisz ten zapisany obraz. Co na nim widać?" else "Co widzisz na udostępnianym właśnie obrazie?"
+        Api.ask(this,Protocol.frameCaption(frame) + "\n" + prompt,listOf(frame.dataUrl))
     }
     private fun switchPanel() {
         Draft.text=draft.text.toString()
@@ -349,8 +355,22 @@ open class PanelActivity : Activity() {
                 .setPositiveButton("Wyczyść") {_,_->Hub.clear();Draft.images.clear();Draft.referenceImages=emptyList();renderAttachments()}.setNegativeButton("Anuluj",null).show()
             4->export()
             5->startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://questgpt-2.songoku222.chatgpt.site")))
-            6->{Hub.voiceService?.stopVoice();Hub.screenService?.stopCapture();Hub.textCall?.cancel();Hub.note("Mikrofon i udostępnianie zatrzymane.")}
+            6->{Hub.stopAll()}
         }}.show()
+    }
+    private fun shortcuts() {
+        AlertDialog.Builder(this).setTitle("Szybkie menu").setItems(arrayOf(
+            "Otoczenie MR — przezroczysty widok", "Kamera w bieżącym panelu", "Zwiń do ikony",
+            "Wycisz / włącz mikrofon", "Przerwij odpowiedź", "Zatrzymaj obraz", "Zatrzymaj wszystko"
+        )) { _, which -> when (which) {
+            0 -> QuestRuntime.openEnvironment(this)
+            1 -> environment.camera()
+            2 -> { startActivity(Intent(this, EnvironmentActivity::class.java).putExtra("compact", true)); finish() }
+            3 -> Hub.voiceService?.mute()
+            4 -> { Hub.voiceService?.interrupt(); Hub.textCall?.cancel() }
+            5 -> { Hub.cameraService?.stopCamera(); Hub.screenService?.stopCapture() }
+            6 -> Hub.stopAll()
+        } }.setNegativeButton("Zamknij", null).show()
     }
     private fun connection() {
         val store=CredentialStore(this)
@@ -395,7 +415,7 @@ open class PanelActivity : Activity() {
         content.addView(button("Zezwól na powiadomienia") {if(Build.VERSION.SDK_INT>=33)requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),11)})
         val updater:()->Unit = {
             val s=Hub.state
-            result.text="QuestGPT ${BuildConfig.VERSION_NAME}\n${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n\n${s.apiTest}\n\n${s.voice}\nMikrofon: ${s.micLevel}/100\n\n${s.capture}\nKlatki potwierdzone przez OpenAI: ${s.sentFrames}\n\nTest sprzętowy zaliczony dopiero, gdy usłyszysz odpowiedź i podgląd pokaże grę."
+            result.text="QuestGPT ${BuildConfig.VERSION_NAME}\n${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n\n${s.apiTest}\n\n${s.voice}\nMikrofon: ${s.micLevel}/100\n\n${s.capture}\n${s.cameraStatus}\nKlatki potwierdzone przez OpenAI: ${s.sentFrames}\n\nTest sprzętowy zaliczony dopiero, gdy usłyszysz odpowiedź i podgląd pokaże grę."
         }
         val dialog=AlertDialog.Builder(this).setTitle("Sprawdź działanie").setView(ScrollView(this).apply{addView(content)}).setPositiveButton("Zamknij",null).create()
         dialog.setOnDismissListener{Hub.unobserve(updater)};Hub.observe(updater);dialog.show()

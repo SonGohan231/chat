@@ -26,6 +26,7 @@ class VoiceService : Service() {
     @Volatile private var audio: AudioEngine? = null
     @Volatile private var ended = false
     private var lastFrameSequence = -1L
+    private var lastFrameSource: VisionSource? = null
     private var lastImageAt = 0L
     private val imageItems = ArrayDeque<String>()
     private val pendingImages = mutableSetOf<String>()
@@ -122,7 +123,7 @@ class VoiceService : Service() {
             }
             "conversation.item.created", "conversation.item.added", "conversation.item.done" -> {
                 val id = e.optJSONObject("item")?.optString("id")
-                if(id != null && pendingImages.remove(id) && Hub.state.sharing) {
+                if(id != null && pendingImages.remove(id) && Hub.state.visionActive()) {
                     Hub.change { it.copy(sentFrames = it.sentFrames + 1, lastSentAt = SystemClock.elapsedRealtime()) }
                 }
             }
@@ -140,18 +141,18 @@ class VoiceService : Service() {
     }
     private fun sendScreen(force: Boolean) {
         val s = Hub.state
-        val frame = s.frame
         val now = SystemClock.elapsedRealtime()
-        if(!s.sharing || !gate.ready) return
+        val frame = s.activeFrame(now)
+        if(!s.visionActive() || !gate.ready) return
         if(!Protocol.fresh(frame, now) || frame == null) {
-            if(imageItems.isNotEmpty()) clearScreenContext("Aktualny ekran jest niedostępny lub pusty. Nie opisuj poprzednich klatek jako obecnego widoku.")
+            if(imageItems.isNotEmpty()) clearScreenContext("Aktualny obraz jest niedostępny lub pusty. Nie opisuj poprzednich klatek jako obecnego widoku.")
             return
         }
-        if(frame.sequence == lastFrameSequence) return
+        if(frame.sequence == lastFrameSequence && frame.source == lastFrameSource) return
         if(!force && now - lastImageAt < 1950L) return
-        val id = "screen_${now}_${frame.sequence}"
-        if(send(Protocol.item("Udostępniany ekran, klatka ${frame.sequence}. To obraz z chwili przechwycenia; odpowiedz dopiero na pytanie.", listOf(frame.dataUrl), id))) {
-            lastFrameSequence = frame.sequence; lastImageAt = now
+        val id = "vision_${now}_${frame.sequence}"
+        if(send(Protocol.item(Protocol.frameCaption(frame) + " Odpowiedz dopiero na pytanie.", listOf(frame.dataUrl), id))) {
+            lastFrameSequence = frame.sequence; lastFrameSource = frame.source; lastImageAt = now
             pendingImages.add(id); imageItems.addLast(id)
             while(imageItems.size > 3) {
                 val old = imageItems.removeFirst(); pendingImages.remove(old)
@@ -159,10 +160,10 @@ class VoiceService : Service() {
             }
         }
     }
-    fun clearScreenContext(reason: String = "Udostępnianie ekranu zostało zatrzymane. Nie masz aktualnego widoku.") {
+    fun clearScreenContext(reason: String = "Udostępnianie obrazu zostało zatrzymane. Nie masz aktualnego widoku.") {
         val clear: () -> Unit = {
             while(imageItems.isNotEmpty()) send(JSONObject().put("type", "conversation.item.delete").put("item_id", imageItems.removeFirst()))
-            pendingImages.clear(); lastFrameSequence = -1L
+            pendingImages.clear(); lastFrameSequence = -1L; lastFrameSource = null; lastImageAt = 0
             if(gate.ready && !ended) send(Protocol.item(reason))
             Unit
         }

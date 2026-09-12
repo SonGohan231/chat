@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:horizonos="http://schemas.horizonos/sdk">
-    <horizonos:uses-horizonos-sdk horizonos:minSdkVersion="69" horizonos:targetSdkVersion="76" />
+    <horizonos:uses-horizonos-sdk horizonos:minSdkVersion="74" horizonos:targetSdkVersion="83" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="com.oculus.permission.RENDER_MODEL" />
+    <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.vr.headtracking" android:required="false" />
+    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="false" />
+    <uses-feature android:name="com.oculus.feature.RENDER_MODEL" android:required="false" />
+    <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+    <uses-feature android:name="oculus.software.overlay_keyboard" android:required="false" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -13,6 +24,20 @@
         android:usesCleartextTraffic="false" android:label="QuestGPT 2" android:icon="@drawable/ic_quest"
         android:theme="@style/AppTheme">
         <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s" />
+        <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
+        <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />
+        <uses-native-library android:name="libossdk.oculus.so" android:required="false" />
+        <activity android:name=".EnvironmentActivity" android:exported="false" android:resizeableActivity="true"
+            android:theme="@style/TransparentTheme" android:launchMode="singleTask" />
+        <activity android:name=".ImmersiveActivity" android:exported="true" android:launchMode="singleTask"
+            android:label="QuestGPT · Otoczenie MR"
+            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="com.oculus.intent.category.VR" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <activity android:name=".MainActivity" android:exported="true"
             android:resizeableActivity="true" android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
@@ -55,6 +80,8 @@
         </activity>
         <service android:name=".ScreenService" android:exported="false" android:foregroundServiceType="mediaProjection" />
         <service android:name=".VoiceService" android:exported="false" android:foregroundServiceType="microphone" />
+        <service android:name=".CameraService" android:exported="false" android:foregroundServiceType="camera" />
+        <receiver android:name=".StopReceiver" android:exported="false" />
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files"
             android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />

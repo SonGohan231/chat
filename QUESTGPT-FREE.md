@@ -49,3 +49,12 @@ Testy obejmują panele, anulowanie zrzutu, faktyczne MediaProjection → JPEG �
 - https://developer.android.com/develop/ui/views/layout/webapps/webview
 - https://developer.chrome.com/docs/android/custom-tabs
 - https://developer.android.com/media/grow/media-projection
+
+## Zweryfikowane wydanie 1.0.5
+
+- 2026-09-12: 2 testy jednostkowe, Android lint oraz 6 testów na Androidzie 15 zakończone sukcesem.
+- Wyniki: https://github.com/SonGohan231/chat/actions/runs/34695494180
+- Kod kompilacji: `6327c6ba3c43a9cae5e77510838cc5af9323384c`.
+- Podpisany APK: 5 301 309 bajtów, SHA-256 `8f9878b0dff4f12ef6a86805aa5ac46a1ef653f46efd5346049c9393c6bbfb00`.
+- Potwierdzono natywne panele, zapis rzeczywistego obrazu przez MediaProjection, samoczynne zakończenie usługi i wybranie załącznika w odizolowanym formularzu WebView.
+- Próba publicznego ChatGPT w osadzonym panelu dotarła do weryfikacji Cloudflare. Główną ścieżką pozostaje zwykła przeglądarka. Logowania, rozmowy na koncie użytkownika i fizycznego Questa nie zweryfikowano.

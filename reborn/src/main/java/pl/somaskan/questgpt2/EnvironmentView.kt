@@ -49,7 +49,7 @@ class EnvironmentView(context: Context, private val compact: Boolean, private va
             isClickable = true; isFocusable = true
         }
         card.addView(text("Pokaż otoczenie asystentowi", 25f, true))
-        val explanation = text("Kamera RGB gogli pokaże fizyczne otoczenie. W Live do OpenAI trafi zdjęcie co około 2 sekundy oraz przy pytaniu. Bez Live obraz zostaje lokalnie do chwili wysłania pytania. Obrazy zużywają środki API.\n\nPrzycisk Kamera wyłącza udostępnianie. Stop wszystko kończy kamerę, mikrofon i ekran. Passthrough dla Ciebie może nadal pozostać widoczny.", 19f)
+        val explanation = text(EnvironmentController.CAMERA_EXPLANATION, 19f)
         card.addView(ScrollView(context).apply { addView(explanation) }, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(20); bottomMargin = dp(20) })
         fun dismiss() { removeView(card); cameraExplanation = null }
         val buttons = row()

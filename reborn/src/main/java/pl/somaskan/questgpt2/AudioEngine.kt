@@ -55,12 +55,19 @@ class AudioEngine(private val context: Context, private val onPcm: (ByteArray) -
         if(manager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) error("System nie udostępnił dźwięku. Wróć do panelu i spróbuj ponownie.")
         oldMode = manager.mode
         manager.mode = AudioManager.MODE_IN_COMMUNICATION
-        val min = AudioRecord.getMinBufferSize(24000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        check(min > 0) { "Mikrofon nie obsługuje 24 kHz." }
-        val r = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 24000, AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT, maxOf(min * 2, 9600))
-        record = r
-        check(r.state == AudioRecord.STATE_INITIALIZED) { "Nie można otworzyć mikrofonu." }
+        var inputRate=24000
+        var opened: AudioRecord?=null
+        for(rate in intArrayOf(24000,48000)) {
+            val min=AudioRecord.getMinBufferSize(rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
+            if(min<=0) continue
+            val candidate=runCatching {AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION,rate,
+                AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,maxOf(min*2,rate/5*2))}.getOrNull() ?: continue
+            if(candidate.state==AudioRecord.STATE_INITIALIZED) {opened=candidate;inputRate=rate;break}
+            candidate.release()
+        }
+        val r=opened ?: error("Nie można otworzyć mikrofonu w 24 ani 48 kHz.")
+        record=r
+        val converter=Pcm24(inputRate)
         if(AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(r.audioSessionId)?.apply { enabled = true }
         if(NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(r.audioSessionId)?.apply { enabled = true }
         val size = AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -73,20 +80,19 @@ class AudioEngine(private val context: Context, private val onPcm: (ByteArray) -
         t.play(); r.startRecording(); running = true
         workers.execute {
             try {
-                val samples = ShortArray(480)
+                val samples = ShortArray(inputRate/50)
                 var meterAt = 0L
                 while(running) {
                     val n = r.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING)
                     if(n < 0) { if(running) onError("Mikrofon został zatrzymany przez system ($n)."); break }
                     if(n == 0) continue
-                    val bytes = ByteArray(n * 2)
+                    val bytes = converter.convert(samples,n)
                     var energy = 0.0
                     for(i in 0 until n) {
                         val sample = if(muted) 0 else samples[i].toInt()
-                        bytes[i*2] = sample.toByte(); bytes[i*2+1] = (sample shr 8).toByte()
                         energy += sample.toDouble() * sample
                     }
-                    if(!muted && running) onPcm(bytes)
+                    if(!muted && running && bytes.isNotEmpty()) onPcm(bytes)
                     val now = SystemClock.elapsedRealtime()
                     if(now - meterAt > 180) {
                         meterAt = now

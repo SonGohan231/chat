@@ -90,8 +90,36 @@ class PanelSmokeTest {
         assertNotNull(Hub.state.frame)
         assertFalse(Hub.state.frame!!.blank)
         capture("screen-sharing")
+        Hub.screenService!!.scheduleSnapshot()
+        assertTrue(device.wait(Until.hasObject(By.textContains("Zrzut gotowy")),12000))
+        val snapshot=Hub.state.snapshot
+        assertNotNull("Delayed screenshot should retain a real frame",snapshot)
+        assertFalse(snapshot!!.blank)
         Hub.screenService!!.stopCapture()
         assertFalse(Hub.state.sharing)
         assertNull(Hub.state.frame)
+        assertEquals("Saved screenshot survives stopping live capture",snapshot,Hub.state.snapshot)
+    }
+    @Test fun miniControlsFitAtQuestMinimumWidth() {
+        try {
+            device.executeShellCommand("wm size 768x1000")
+            device.executeShellCommand("wm density 320")
+            context.startActivity(Intent(context,MiniActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+            assertTrue(device.wait(Until.hasObject(By.text("QuestGPT · Mini")),10000))
+            device.waitForIdle()
+            for(text in listOf("Live","Ekran","Zdjęcia","Wycisz","Przerwij","Widok","Wyślij")) {
+                val view=device.findObject(By.text(text))
+                assertNotNull("Visible control: $text",view)
+                val bounds=view.visibleBounds
+                assertTrue("Full control width: $text",bounds.width()>=90)
+                assertTrue("Full control height: $text",bounds.height()>=90)
+                assertTrue("Inside panel: $text",bounds.right<=device.displayWidth)
+            }
+            assertComposerAboveSystemBar()
+            capture("mini-384dp")
+        } finally {
+            device.executeShellCommand("wm size reset")
+            device.executeShellCommand("wm density reset")
+        }
     }
 }

@@ -24,7 +24,6 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -64,8 +63,13 @@ open class PanelActivity : Activity() {
     private lateinit var send: Button
     private lateinit var meter: ProgressBar
     private lateinit var attachments: LinearLayout
+    private val actionRows=mutableListOf<View>()
+    private var keyboardVisible=false
     private var lastMessages: List<Message>? = null
     private var permissionAction: String? = null
+    private var takeSnapshotAfterConsent = false
+    private val preferences by lazy { getSharedPreferences("questgpt2_ui",0) }
+    private var startupChecked = false
     private val io = Executors.newSingleThreadExecutor()
     private val observer: () -> Unit = { if(!isDestroyed) render() }
 
@@ -77,12 +81,17 @@ open class PanelActivity : Activity() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
+            keyboardVisible=insets.isVisible(WindowInsetsCompat.Type.ime())
+            actionRows.forEach {it.visibility=if(keyboardVisible) View.GONE else View.VISIBLE}
+            if(::status.isInitialized) status.visibility=if(keyboardVisible) View.GONE else View.VISIBLE
+            if(::meter.isInitialized) meter.visibility=if(keyboardVisible) View.GONE else View.VISIBLE
+            if(::note.isInitialized) note.visibility=if(keyboardVisible || Hub.state.note.isBlank()) View.GONE else View.VISIBLE
             view.setPadding(dp(20) + safe.left, dp(14) + safe.top,
                 dp(20) + safe.right, dp(12) + maxOf(safe.bottom, keyboard.bottom))
             insets
         }
         val header = row()
-        header.addView(label(if(mini) "QuestGPT · Mini" else "QuestGPT 2", if(mini) 24f else 29f, true), LinearLayout.LayoutParams(0,dp(48),1f))
+        header.addView(label(if(mini) "QuestGPT · Mini" else "QuestGPT 2", if(mini) 20f else 29f, true).apply { maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0,dp(48),1f))
         header.addView(button(if(mini) "Otwórz" else "Mini") { switchPanel() })
         header.addView(button("⋯") { menu() }.apply { contentDescription = "Menu i połączenie" })
         root.addView(header)
@@ -98,15 +107,18 @@ open class PanelActivity : Activity() {
         root.addView(scroll, LinearLayout.LayoutParams(-1,0,1f))
         attachments = row()
         root.addView(attachments)
-        val controls = row()
         live = button("Live") { toggleVoice() }
         share = button("Ekran") { toggleScreen() }
-        controls.addView(live); controls.addView(share)
-        controls.addView(button("Zdjęcia") { pickImages() })
-        controls.addView(button("Klatka") { previewFrame() })
-        controls.addView(button("Wycisz") { Hub.voiceService?.mute() ?: Hub.note("Najpierw włącz Live.") })
-        controls.addView(button("Przerwij") { Hub.voiceService?.interrupt(); Hub.textCall?.cancel() })
-        root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled=false; addView(controls) })
+        fun controls(vararg buttons: Button) {
+            val line=row()
+            buttons.forEach { control -> line.addView(control,LinearLayout.LayoutParams(0,dp(48),1f).apply {setMargins(dp(2),dp(3),dp(2),dp(3))}) }
+            root.addView(line)
+            actionRows.add(line)
+        }
+        controls(live, share, button("Zdjęcia") { pickImages() })
+        controls(button("Wycisz") { Hub.voiceService?.mute() ?: Hub.note("Najpierw włącz Live.") },
+            button("Przerwij") { Hub.voiceService?.interrupt(); Hub.textCall?.cancel() },
+            button("Widok") { viewActions() })
         val composer = row()
         draft = EditText(this).apply {
             setTextColor(white); setHintTextColor(muted); hint = "Zapytaj o cokolwiek…"
@@ -125,11 +137,22 @@ open class PanelActivity : Activity() {
         if(!mini) root.addView(label("Mów w Live lub dołącz obraz. Udostępnianie ekranu zawsze wymaga zgody systemu.",14f).apply {setTextColor(muted)})
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
-        if(Hub.state.messages.isEmpty()) Hub.message("guide", "Cześć! Możesz ze mną pisać, rozmawiać i pokazywać obrazy.\n\nZacznij od ⋯ → Połączenie: zapisz własny klucz OpenAI API i wykonaj test. Potem włącz Live oraz Ekran.\n\nMini panel otworzysz przyciskiem Mini albo z menu Questa podczas gry.")
+        if(Hub.state.messages.isEmpty()) Hub.message("guide", "Cześć! Możesz ze mną pisać, rozmawiać i pokazywać obrazy.\n\nZacznij od ⋯ → Połączenie: zapisz własny klucz OpenAI API i wykonaj test. Potem włącz Live oraz Ekran.\n\nMini panel ma też własną ikonę w bibliotece Questa. Widok pozwala zapytać o ekran lub zrobić zrzut za 5 sekund.")
         receiveShare(intent)
         Updates.check()
     }
     override fun onStart() { super.onStart(); Hub.observe(observer); renderAttachments() }
+    override fun onResume() {
+        super.onResume()
+        if(!startupChecked) {
+            startupChecked=true
+            // Start only from a visible panel and only after the user has enabled this setting.
+            if(preferences.getBoolean("autostart",false) && CredentialStore(this).hasKey() && !Hub.state.voiceActive &&
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) {
+                window.decorView.post { if(!isFinishing && !isDestroyed && hasWindowFocus() && !Hub.state.voiceActive) toggleVoice() }
+            }
+        }
+    }
     override fun onStop() { Draft.text=draft.text.toString(); Hub.unobserve(observer); super.onStop() }
     override fun onDestroy() { io.shutdown(); super.onDestroy() }
     override fun onSaveInstanceState(outState: Bundle) { outState.putString("draft",draft.text.toString()); super.onSaveInstanceState(outState) }
@@ -139,13 +162,17 @@ open class PanelActivity : Activity() {
         val s = Hub.state
         val age = if(s.lastSentAt > 0) " · OpenAI: ${s.sentFrames} klatek" else ""
         status.text = "${s.voice}\n${s.capture}$age"
+        status.maxLines=if(mini) 3 else 4
         meter.progress = s.micLevel
         live.text = if(s.voiceActive) "Stop Live" else "Live"
         share.text = if(s.sharing) "Stop ekran" else "Ekran"
         send.isEnabled = !s.busy
         send.text = if(s.busy) "Czekaj…" else "Wyślij"
         note.text = s.note
-        note.visibility=if(s.note.isBlank()) View.GONE else View.VISIBLE
+        note.maxLines=if(mini) 2 else 3
+        note.ellipsize=android.text.TextUtils.TruncateAt.END
+        note.setOnClickListener { if(s.note.isNotBlank()) AlertDialog.Builder(this).setMessage(s.note).setPositiveButton("Zamknij",null).show() }
+        note.visibility=if(s.note.isBlank() || keyboardVisible) View.GONE else View.VISIBLE
         if(lastMessages != s.messages) {
             val atBottom = scroll.getChildAt(0)?.let { it.height - (scroll.height + scroll.scrollY) < dp(100) } ?: true
             history.removeAllViews()
@@ -153,7 +180,7 @@ open class PanelActivity : Activity() {
             messages.forEach { message ->
                 val card = column().apply { setPadding(dp(14),dp(10),dp(14),dp(12)); background=shape(if(message.role=="user")0xff24394b.toInt() else surface) }
                 card.addView(label(when(message.role){ "user" -> "TY"; "guide" -> "NA POCZĄTEK"; else -> "ASYSTENT" },13f,true).apply {setTextColor(accent)})
-                card.addView(label(message.text + if(!message.complete) " ▍" else "",if(mini)18f else 20f).apply {setTextIsSelectable(true); setLineSpacing(dp(3).toFloat(),1.08f)})
+                card.addView(label(message.text + if(!message.complete) " ▍" else "",if(mini)17f else 20f).apply {setTextIsSelectable(true); setLineSpacing(dp(3).toFloat(),1.08f)})
                 history.addView(card,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8);bottomMargin=dp(3)})
             }
             lastMessages=s.messages
@@ -183,7 +210,7 @@ open class PanelActivity : Activity() {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
             permissionAction="voice"; requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),10); return
         }
-        runCatching { startForegroundService(Intent(this,VoiceService::class.java).setAction("START").putExtra("greeting",getPreferences(0).getBoolean("greeting",true))) }
+        runCatching { startForegroundService(Intent(this,VoiceService::class.java).setAction("START").putExtra("greeting",preferences.getBoolean("greeting",true))) }
             .onFailure { Hub.note("Nie można włączyć mikrofonu. Uruchom Live z widocznego panelu Questa.") }
     }
     private fun toggleScreen() {
@@ -212,11 +239,13 @@ open class PanelActivity : Activity() {
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
         if(requestCode==20) {
-            if(resultCode!=RESULT_OK || data==null) { Hub.note("Zgoda anulowana. Ekran nie jest udostępniany."); return }
+            if(resultCode!=RESULT_OK || data==null) { takeSnapshotAfterConsent=false; Hub.note("Zgoda anulowana. Ekran nie jest udostępniany."); return }
             val bounds=getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
             val scale=1280.0/maxOf(bounds.width(),bounds.height(),1)
             runCatching { startForegroundService(Intent(this,ScreenService::class.java).setAction("START").putExtra("code",resultCode).putExtra("consent",data)
-                .putExtra("width",(bounds.width()*scale).toInt()).putExtra("height",(bounds.height()*scale).toInt())) }
+                .putExtra("width",(bounds.width()*scale).toInt()).putExtra("height",(bounds.height()*scale).toInt())
+                .putExtra("snapshot",takeSnapshotAfterConsent))
+                takeSnapshotAfterConsent=false }
                 .onFailure { Hub.note("Nie można uruchomić przechwytywania. Wróć do panelu i ponów zgodę.") }
         }
         if(requestCode==30 && resultCode==RESULT_OK && data!=null) {
@@ -267,20 +296,45 @@ open class PanelActivity : Activity() {
     private fun bitmap(data:String):Bitmap? = runCatching {val bytes=Base64.decode(data.substringAfter(','),Base64.DEFAULT);android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.size)}.getOrNull()
     private fun renderAttachments() {
         attachments.removeAllViews()
-        Draft.images.forEach { url -> attachments.addView(ImageView(this).apply {setImageBitmap(bitmap(url)); contentDescription="Obraz do wysłania"; scaleType=ImageView.ScaleType.CENTER_CROP},LinearLayout.LayoutParams(dp(72),dp(52))) }
+        Draft.images.forEach { url -> attachments.addView(ImageView(this).apply {setImageBitmap(bitmap(url)); contentDescription="Obraz do wysłania"; scaleType=ImageView.ScaleType.CENTER_CROP},LinearLayout.LayoutParams(dp(if(mini)44 else 64),dp(48))) }
         if(Draft.images.isNotEmpty() || Draft.referenceImages.isNotEmpty()) {
-            attachments.addView(button(if(Draft.images.isNotEmpty())"Usuń obrazy" else "Zapomnij ostatni obraz") { Draft.images.clear();Draft.referenceImages=emptyList();renderAttachments() })
+            attachments.addView(button(if(Draft.images.isNotEmpty())"Usuń obrazy" else "Zapomnij obraz") { Draft.images.clear();Draft.referenceImages=emptyList();renderAttachments() },LinearLayout.LayoutParams(0,dp(48),1f))
         }
     }
     private fun previewFrame() {
-        val frame=Hub.state.frame
+        val frame=Hub.state.snapshot ?: Hub.state.frame
         if(frame==null) { Hub.note("Najpierw włącz Ekran. Potem przejdź do gry i wróć do tego panelu."); return }
         val content=column().apply {setPadding(dp(18),dp(8),dp(18),dp(10))}
         content.addView(ImageView(this).apply {setImageBitmap(bitmap(frame.dataUrl));adjustViewBounds=true;contentDescription="Rzeczywista przechwycona klatka"},LinearLayout.LayoutParams(-1,dp(220)))
         content.addView(label("Klatka ${frame.sequence} · wiek ${(SystemClock.elapsedRealtime()-frame.at)/1000}s" + if(frame.blank) "\nObraz jest ciemny/pusty. Może być chroniony." else "",16f))
         AlertDialog.Builder(this).setTitle("To jest obraz udostępniany przez Questa").setView(content)
-            .setPositiveButton("Dołącz klatkę") { _,_ -> Draft.images.clear();Draft.images.add(frame.dataUrl);renderAttachments();Hub.note("Klatka dołączona. Wpisz pytanie i wyślij.") }
+            .setPositiveButton("Dołącz klatkę") { _,_ -> Draft.images.clear();Draft.images.add(frame.dataUrl);Hub.change {it.copy(snapshot=null)};renderAttachments();Hub.note("Klatka dołączona. Wpisz pytanie i wyślij.") }
+            .setNeutralButton("Zapytaj o obraz") { _,_ -> askAboutFrame(frame, true) }
             .setNegativeButton("Zamknij",null).show()
+    }
+    private fun viewActions() {
+        AlertDialog.Builder(this).setTitle("Pokaż asystentowi")
+            .setItems(arrayOf("Zapytaj o aktualny widok", "Podgląd / dołącz klatkę", "Zrzut za 5 sekund")) { _,which ->
+                when(which) {
+                    0 -> {
+                        val frame=Hub.state.frame
+                        if(!Hub.state.sharing || !Protocol.fresh(frame,SystemClock.elapsedRealtime()) || frame==null)
+                            Hub.note("Włącz Ekran i poczekaj na świeżą klatkę. Możesz też wybrać Zdjęcia.")
+                        else askAboutFrame(frame,false)
+                    }
+                    1 -> previewFrame()
+                    2 -> {
+                        if(Hub.state.sharing) Hub.screenService?.scheduleSnapshot()
+                        else { takeSnapshotAfterConsent=true; toggleScreen() }
+                    }
+                }
+            }.setNegativeButton("Zamknij",null).show()
+    }
+    private fun askAboutFrame(frame: Frame, frozen: Boolean) {
+        if(frame.blank) { Hub.note("Klatka jest pusta lub chroniona. Wybierz inny widok."); return }
+        if(!CredentialStore(this).hasKey()) { connection(); return }
+        val prompt=if(frozen) "Opisz ten zapisany zrzut ekranu. Co na nim widać?" else "Co widzisz na udostępnianym właśnie ekranie?"
+        Api.ask(this,prompt,listOf(frame.dataUrl))
     }
     private fun switchPanel() {
         Draft.text=draft.text.toString()
@@ -309,7 +363,8 @@ open class PanelActivity : Activity() {
         val textModel=EditText(this).apply{setText(store.textModel());setSingleLine()};content.addView(textModel)
         content.addView(label("Model rozmowy Live",16f))
         val voiceModel=EditText(this).apply{setText(store.realtimeModel());setSingleLine()};content.addView(voiceModel)
-        val greeting=android.widget.CheckBox(this).apply{text="Powitanie głosowe po włączeniu Live";isChecked=getPreferences(0).getBoolean("greeting",true)};content.addView(greeting)
+        val autostart=android.widget.CheckBox(this).apply {text="Rozpoczynaj Live po otwarciu aplikacji";isChecked=preferences.getBoolean("autostart",false)};content.addView(autostart)
+        val greeting=android.widget.CheckBox(this).apply{text="Powitanie głosowe po włączeniu Live";isChecked=preferences.getBoolean("greeting",true)};content.addView(greeting)
         val testStatus=label(Hub.state.apiTest,16f);content.addView(testStatus)
         val dialog=AlertDialog.Builder(this).setTitle("Połączenie").setView(ScrollView(this).apply{addView(content)})
             .setPositiveButton("Zapisz i testuj",null).setNegativeButton("Zamknij",null).setNeutralButton("Usuń klucz",null).create()
@@ -321,7 +376,7 @@ open class PanelActivity : Activity() {
                     if(key.text.toString().isNotBlank())store.saveKey(key.text.toString())
                     store.saveModels(textModel.text.toString(),voiceModel.text.toString())
                     check(store.hasKey()) {"Wklej klucz API, aby wykonać test."}
-                    key.text.clear();getPreferences(0).edit().putBoolean("greeting",greeting.isChecked).apply()
+                    key.text.clear();preferences.edit().putBoolean("greeting",greeting.isChecked).putBoolean("autostart",autostart.isChecked).apply()
                     Api.test(this);dialog.dismiss();diagnostics()
                 }.onFailure{testStatus.text=Protocol.safe(it.message.orEmpty())}
             }
@@ -362,9 +417,9 @@ open class PanelActivity : Activity() {
     private fun row()=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
     private fun label(value:String,size:Float=18f,bold:Boolean=false)=TextView(this).apply{text=value;textSize=size;setTextColor(white);if(bold)setTypeface(null,Typeface.BOLD)}
     private fun button(value:String,primary:Boolean=false,action:()->Unit)=Button(this).apply {
-        text=value;isAllCaps=false;textSize=16f;minWidth=dp(48);minimumWidth=dp(48);minHeight=dp(48)
+        text=value;isAllCaps=false;textSize=if(mini)14f else 16f;minWidth=dp(48);minimumWidth=dp(48);minHeight=dp(48)
         setTextColor(if(primary)bg else white);background=shape(if(primary)accent else surface)
-        setPadding(dp(14),dp(6),dp(14),dp(6));layoutParams=LinearLayout.LayoutParams(-2,dp(48)).apply{setMargins(dp(3),dp(4),dp(3),dp(4))}
+        setPadding(dp(if(mini)6 else 12),dp(6),dp(if(mini)6 else 12),dp(6));layoutParams=LinearLayout.LayoutParams(-2,dp(48)).apply{setMargins(dp(3),dp(4),dp(3),dp(4))}
         setOnClickListener{action()}
     }
     private fun shape(color:Int)=GradientDrawable().apply{setColor(color);cornerRadius=dp(12).toFloat()}

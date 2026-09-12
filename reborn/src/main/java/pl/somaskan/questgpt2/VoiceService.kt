@@ -36,7 +36,7 @@ class VoiceService : Service() {
     }
     override fun onCreate() {
         super.onCreate(); Hub.voiceService = this
-        registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), RECEIVER_NOT_EXPORTED)
+        androidx.core.content.ContextCompat.registerReceiver(this,screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if(intent == null || intent.action == "STOP") { stopVoice(); return START_NOT_STICKY }
@@ -67,11 +67,13 @@ class VoiceService : Service() {
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { Hub.main.post { stopVoice("Rozmowa zakończona. Możesz uruchomić Live ponownie.") } }
             })
-            Hub.main.postDelayed({ if(!gate.ready && !ended) stopVoice("OpenAI nie potwierdziło sesji. Sprawdź klucz i model Live w Połączeniu.") }, 20000)
-            Hub.main.postDelayed({ if(!ended) stopVoice("Sesja osiągnęła 55 minut. Włącz Live ponownie, aby kontynuować.") }, 55 * 60 * 1000L)
+            Hub.main.postDelayed(sessionTimeout, 20000)
+            Hub.main.postDelayed(sessionLimit, 55 * 60 * 1000L)
         }.onFailure { stopVoice("Nie można włączyć Live: ${Protocol.safe(it.message.orEmpty())}") }
         return START_NOT_STICKY
     }
+    private val sessionTimeout=Runnable { if(!gate.ready && !ended) stopVoice("OpenAI nie potwierdziło sesji. Sprawdź klucz i model Live w Połączeniu.") }
+    private val sessionLimit=Runnable { if(!ended) stopVoice("Sesja osiągnęła 55 minut. Włącz Live ponownie, aby kontynuować.") }
     private fun send(event: JSONObject): Boolean {
         val ws = socket ?: return false
         if(ended || ws.queueSize() > 1024 * 1024) { Hub.main.post { stopVoice("Połączenie nie nadąża. Sesja zatrzymana, aby nie wysyłać opóźnionego dźwięku.") }; return false }
@@ -118,7 +120,7 @@ class VoiceService : Service() {
                     stopVoice("OpenAI nie mogło odpowiedzieć: ${Protocol.safe(err?.optString("message").orEmpty())}")
                 } else Hub.change { it.copy(voice = if(it.muted) "Mikrofon wyciszony" else "Słucham") }
             }
-            "conversation.item.created" -> {
+            "conversation.item.created", "conversation.item.added", "conversation.item.done" -> {
                 val id = e.optJSONObject("item")?.optString("id")
                 if(id != null && pendingImages.remove(id) && Hub.state.sharing) {
                     Hub.change { it.copy(sentFrames = it.sentFrames + 1, lastSentAt = SystemClock.elapsedRealtime()) }
@@ -174,8 +176,8 @@ class VoiceService : Service() {
         createResponse(); return true
     }
     private fun createResponse() {
-        if(!gate.ready || ended) return
-        send(JSONObject().put("type", "response.create")); replying = true
+        if(!gate.ready || ended || replying) return
+        if(send(JSONObject().put("type", "response.create"))) replying = true
     }
     fun mute() {
         val a = audio ?: return
@@ -196,6 +198,7 @@ class VoiceService : Service() {
         audio?.stop(); audio = null
         Hub.change { it.copy(voice = reason, voiceActive = false, voiceReady = false, micLevel = 0, muted = false) }
         Hub.main.removeCallbacks(imagePump)
+        Hub.main.removeCallbacks(sessionTimeout);Hub.main.removeCallbacks(sessionLimit)
         Hub.main.post { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
     }
     override fun onDestroy() {

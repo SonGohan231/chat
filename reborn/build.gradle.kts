@@ -10,8 +10,8 @@ android {
         applicationId = "pl.somaskan.questgpt2"
         minSdk = 32
         targetSdk = 35
-        versionCode = 20000 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
-        versionName = "2.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "1")
+        versionCode = 20100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
+        versionName = "2.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "1")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {

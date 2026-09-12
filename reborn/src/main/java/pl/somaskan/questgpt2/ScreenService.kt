@@ -29,6 +29,7 @@ class ScreenService : Service() {
     private var lastFrameAt = 0L
     private var startedAt = 0L
     private var sequence = 0L
+    private var snapshotAt = 0L
     private val callback = object : MediaProjection.Callback() {
         override fun onStop() { stopCapture("Udostępnianie zakończone przez system. Włącz je ponownie, aby uzyskać nową zgodę.") }
     }
@@ -62,6 +63,7 @@ class ScreenService : Service() {
             startedAt = SystemClock.elapsedRealtime()
             Hub.change { it.copy(sharing = true, capture = "Czekam na pierwszą klatkę…", frame = null, sentFrames = 0, lastSentAt = 0) }
             worker.postDelayed(watchdog, 3000)
+            if(intent.getBooleanExtra("snapshot",false)) scheduleSnapshot()
         } catch(e: Exception) { stopCapture("Nie udało się udostępnić ekranu: ${Protocol.safe(e.message.orEmpty())}") }
         return START_NOT_STICKY
     }
@@ -103,13 +105,27 @@ class ScreenService : Service() {
             if (ending) return
             lastFrameAt = now
             val frame = Frame("data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP), now, ++sequence, blank)
-            Hub.change { if(ending || !it.sharing) it else it.copy(frame = frame, capture = if(blank) "Ciemna/pusta klatka — możliwa blokada aplikacji." else "Ekran udostępniany · klatka ${sequence}") }
+            val takeSnapshot=snapshotAt > 0 && now >= snapshotAt
+            if(takeSnapshot) snapshotAt=0
+            Hub.change { if(ending || !it.sharing) it else it.copy(frame = frame,
+                snapshot=if(takeSnapshot && !blank) frame else it.snapshot,
+                snapshotPending=if(takeSnapshot) false else it.snapshotPending,
+                note=if(takeSnapshot) {if(blank) "Zrzut jest pusty — wybierz inny widok." else "Zrzut gotowy. Widok → Podgląd / dołącz klatkę."} else it.note,
+                capture = if(blank) "Ciemna/pusta klatka — możliwa blokada aplikacji." else "Ekran udostępniany · klatka ${sequence}") }
         } finally { if(cropped !== padded) cropped?.recycle(); padded.recycle() }
+    }
+    fun scheduleSnapshot() {
+        worker.post {
+            if(!ending) {
+                snapshotAt=SystemClock.elapsedRealtime()+5000L
+                Hub.change {it.copy(snapshot=null,snapshotPending=true,note="Zrzut za 5 sekund. Wróć do gry przyciskiem Meta; potem otwórz Widok → Podgląd.")}
+            }
+        }
     }
     @Synchronized fun stopCapture(reason: String = "Ekran nieudostępniany") {
         if(ending) return
         ending = true
-        Hub.change { it.copy(sharing = false, frame = null, capture = reason) }
+        Hub.change { it.copy(sharing = false, frame = null, snapshotPending=false, capture = reason) }
         Hub.voiceService?.clearScreenContext()
         worker.post {
             runCatching { reader?.setOnImageAvailableListener(null, null) }

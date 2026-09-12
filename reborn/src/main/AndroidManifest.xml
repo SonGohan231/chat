@@ -44,12 +44,13 @@
             android:taskAffinity="pl.somaskan.questgpt2.mini" android:launchMode="singleTask"
             android:resizeableActivity="true" android:label="QuestGPT 2 · Mini"
             android:windowSoftInputMode="adjustResize">
-            <layout android:defaultWidth="480dp" android:defaultHeight="400dp"
-                android:minWidth="320dp" android:minHeight="280dp" />
+            <layout android:defaultWidth="480dp" android:defaultHeight="500dp"
+                android:minWidth="384dp" android:minHeight="500dp" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="com.oculus.intent.category.2D" />
                 <category android:name="com.oculus.intent.category.OVERLAY_LAUNCHER" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
         <service android:name=".ScreenService" android:exported="false" android:foregroundServiceType="mediaProjection" />

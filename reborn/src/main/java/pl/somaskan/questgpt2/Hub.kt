@@ -18,7 +18,7 @@ data class State(
     val voice: String = "Głos wyłączony", val voiceActive: Boolean = false,
     val voiceReady: Boolean = false, val muted: Boolean = false, val micLevel: Int = 0,
     val capture: String = "Ekran nieudostępniany", val sharing: Boolean = false,
-    val frame: Frame? = null, val sentFrames: Int = 0, val lastSentAt: Long = 0,
+    val frame: Frame? = null, val snapshot: Frame? = null, val snapshotPending: Boolean = false, val sentFrames: Int = 0, val lastSentAt: Long = 0,
     val note: String = "", val apiTest: String = "Połączenie niesprawdzone"
 )
 
@@ -55,7 +55,7 @@ object Hub {
         }
     }
     fun complete(id: String) { change { s -> s.copy(messages = s.messages.map { if (it.id == id) it.copy(complete = true) else it }) }; save() }
-    fun clear() { textCall?.cancel(); textCall=null; voiceService?.stopVoice(); change { it.copy(messages = emptyList(), note = "Nowa rozmowa", busy = false) }; save() }
+    fun clear() { textCall?.cancel(); textCall=null; voiceService?.stopVoice(); change { it.copy(messages = emptyList(), snapshot = null, note = "Nowa rozmowa", busy = false) }; save() }
     @Synchronized private fun save() {
         val array = JSONArray()
         state.messages.filter { it.complete }.forEach { array.put(JSONObject().put("id", it.id).put("role", it.role).put("text", it.text)) }

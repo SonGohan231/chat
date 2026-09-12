@@ -31,6 +31,8 @@ class SnapshotService : Service() {
     private var reader: ImageReader?=null
     private val ending=AtomicBoolean(false)
     private var captureAt=0L
+    private var latest: Bitmap?=null
+    private var decodedAt=0L
     private val callback=object: MediaProjection.Callback() {
         override fun onStop() { finishCapture("Przechwytywanie zakończone przez system.") }
     }
@@ -61,7 +63,8 @@ class SnapshotService : Service() {
             r.setOnImageAvailableListener({ source ->
                 runCatching {
                     source.acquireLatestImage()?.use { image ->
-                        if(ending.get() || SystemClock.elapsedRealtime()<captureAt) return@use
+                        val now=SystemClock.elapsedRealtime()
+                        if(ending.get() || now-decodedAt<200) return@use
                         val plane=image.planes.first()
                         val padded=Bitmap.createBitmap(plane.rowStride/plane.pixelStride,image.height,Bitmap.Config.ARGB_8888)
                         var cropped: Bitmap?=null
@@ -71,14 +74,10 @@ class SnapshotService : Service() {
                             val rect=image.cropRect
                             val b=Bitmap.createBitmap(padded,rect.left,rect.top,rect.width(),rect.height())
                             cropped=b
-                            var brightest=0
-                            for(y in 1..8) for(x in 1..12) {
-                                val c=b.getPixel(x*(b.width-1)/13,y*(b.height-1)/9)
-                                brightest=maxOf(brightest,(c shr 16) and 255,(c shr 8) and 255,c and 255)
-                            }
-                            if(brightest<9) { finishCapture("Pusty lub chroniony obraz. Zrób zrzut przyciskiem systemowym Questa i dołącz go z Plików."); return@use }
-                            SnapshotStore.save(this,b)
-                            finishCapture()
+                            latest?.recycle()
+                            latest=b.copy(Bitmap.Config.ARGB_8888,false)
+                            decodedAt=now
+                            if(now>=captureAt) saveLatest()
                         } finally { if(cropped !== padded) cropped?.recycle(); padded.recycle() }
                     }
                 }.onFailure { finishCapture("Nie udało się zapisać zrzutu. Spróbuj ponownie lub użyj zrzutu systemowego Questa.") }
@@ -86,14 +85,32 @@ class SnapshotService : Service() {
             display=p.createVirtualDisplay("QuestGPT Free local screenshot",w,h,resources.configuration.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,r.surface,null,worker)
             SnapshotStore.status(this,"Zrzut za 5 sekund. Wróć do gry przyciskiem Meta. Przechwytywanie zakończy się samo.")
+            // Static screens may not produce another frame at the deadline. Keep the
+            // most recent actual frame and save it even when the display is unchanged.
+            worker.postDelayed({saveLatest()},maxOf(0L,captureAt-SystemClock.elapsedRealtime()))
             worker.postDelayed({ finishCapture("System nie dostarczył obrazu. Użyj zrzutu systemowego Questa.") },20000)
         } catch(e: Exception) { finishCapture("Nie można uruchomić zrzutu. Użyj zrzutu systemowego Questa i dołącz go w ChatGPT.") }
         return START_NOT_STICKY
+    }
+    private fun saveLatest() {
+        if(ending.get()) return
+        val b=latest ?: return
+        try {
+            var brightest=0
+            for(y in 1..8) for(x in 1..12) {
+                val c=b.getPixel(x*(b.width-1)/13,y*(b.height-1)/9)
+                brightest=maxOf(brightest,(c shr 16) and 255,(c shr 8) and 255,c and 255)
+            }
+            if(brightest<9) {finishCapture("Pusty lub chroniony obraz. Użyj systemowego zrzutu Questa.");return}
+            SnapshotStore.save(this,b)
+            finishCapture()
+        } catch(e: Exception) {finishCapture("Nie udało się zapisać zrzutu. Spróbuj ponownie.")}
     }
     private fun finishCapture(message: String?=null) {
         if(!ending.compareAndSet(false,true)) return
         message?.let { SnapshotStore.status(this,it) }
         worker.post {
+            latest?.recycle();latest=null
             reader?.setOnImageAvailableListener(null,null)
             runCatching { display?.release() }; display=null
             runCatching { reader?.close() }; reader=null

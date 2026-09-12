@@ -49,7 +49,8 @@ class EnvironmentSmokeTest {
             repeat(2) {
                 if (device.hasObject(selector)) {
                     device.waitForIdle(3000)
-                    device.findObject(selector)?.clickAndWait(Until.gone(selector), 5000)
+                    device.findObject(selector)?.click()
+                    device.wait(Until.gone(selector), 5000)
                 }
             }
             assertTrue("Camera consent must be accepted before waiting for frames", device.wait(Until.gone(selector), 5000))

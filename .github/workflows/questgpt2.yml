@@ -20,7 +20,7 @@ jobs:
         with:
           gradle-version: '8.13'
       - name: Build and protocol tests
-        run: gradle :reborn:testDebugUnitTest :reborn:assembleDebug :reborn:assembleRelease :reborn:lintDebug --stacktrace
+        run: gradle :reborn:testDebugUnitTest :reborn:assembleDebug :reborn:assembleDebugAndroidTest :reborn:assembleRelease :reborn:lintDebug --stacktrace
       - name: Prepare unsigned release for private signing
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -P 16 -f 4 reborn/build/outputs/apk/release/reborn-release-unsigned.apk QuestGPT-2-aligned.apk

@@ -78,6 +78,7 @@ class FreePanelTest {
         val consent=device.wait(Until.findObject(By.text(Pattern.compile("(?i)start now|start recording|start"))),8000)
         assertNotNull("Android must ask for screen consent",consent)
         consent.click()
+        assertTrue(device.wait(Until.hasObject(By.textContains("Wróć do gry przyciskiem Meta")),8000))
         assertTrue(device.wait(Until.hasObject(By.textContains("Zrzut zapisany:")),18000))
         val uri=SnapshotStore.latest(context)
         assertNotNull(uri);assertNotEquals(before,uri)
@@ -106,7 +107,7 @@ class FreePanelTest {
             }
             // Isolated HTML fixture; does not log in, post to ChatGPT or call any model.
             w.loadDataWithBaseURL("https://chatgpt.com/__questgpt_test__/",
-                """<html><meta name="viewport" content="width=device-width"><body style="background:#122233;color:white;font:28px sans-serif"><p>TEST PLIKU</p><input id="file" type="file" accept="image/*" onchange="document.getElementById('result').textContent=this.files[0]?'ZAŁĄCZONO':'BRAK'"><p id="result">BRAK</p></body></html>""",
+                """<html><meta name="viewport" content="width=device-width"><body style="background:#122233;color:white;font:28px sans-serif"><p>TEST PLIKU</p><button style="font:28px sans-serif" onclick="document.getElementById('file').click()">DOŁĄCZ ZRZUT</button><input hidden id="file" type="file" accept="image/*" onchange="document.getElementById('result').textContent=this.files[0]?'ZAŁĄCZONO':'BRAK'"><p id="result">BRAK</p></body></html>""",
                 "text/html","UTF-8",null)
         }
         assertTrue(ready.await(15,TimeUnit.SECONDS))
@@ -120,8 +121,10 @@ class FreePanelTest {
             }
             panel.web!!.webChromeClient!!.onPermissionRequest(foreign)
             assertTrue(denied)
-            panel.web!!.evaluateJavascript("document.getElementById('file').click()",null)
         }
+        val attach=device.wait(Until.findObject(By.text("DOŁĄCZ ZRZUT")),8000)
+        assertNotNull(attach)
+        attach.click()
         assertTrue(device.wait(Until.hasObject(By.text("Dołącz plik w ChatGPT")),8000))
         device.findObject(By.text("Ostatni zrzut Questa")).click()
         assertTrue(device.wait(Until.hasObject(By.text("ZAŁĄCZONO")),8000))

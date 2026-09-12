@@ -67,6 +67,8 @@ open class FreePanelActivity : Activity() {
     private var permissionDialog: AlertDialog?=null
     private var chooserDialog: AlertDialog?=null
     private var savedWebState: Bundle?=null
+    private var pageProblem: String?=null
+    private val popups=mutableSetOf<WebView>()
     private val handler=Handler(Looper.getMainLooper())
     private val refreshStatus=object: Runnable {
         override fun run() { snapshotStatus?.text=SnapshotStore.status(this@FreePanelActivity); handler.postDelayed(this,500) }
@@ -172,11 +174,12 @@ open class FreePanelActivity : Activity() {
                 }
                 override fun onPageStarted(view: WebView,url: String?,favicon: Bitmap?) {
                     cancelNativeRequests()
+                    pageProblem=null
                     if(webMode) { address.text=WebPolicy.host(url) ?: "Strona"; loading.visibility=View.VISIBLE }
                 }
                 override fun onPageFinished(view: WebView,url: String?) {
                     CookieManager.getInstance().flush()
-                    if(webMode) { address.text=(WebPolicy.host(url) ?: "Strona") + " · bez API"; loading.visibility=View.GONE }
+                    if(webMode) { address.text=pageProblem ?: ((WebPolicy.host(url) ?: "Strona") + " · bez API"); loading.visibility=View.GONE }
                 }
                 override fun onReceivedError(view: WebView,request: WebResourceRequest,error: WebResourceError) {
                     if(request.isForMainFrame) pageError("Nie udało się wczytać strony. Sprawdź internet lub wybierz Przeglądarka.")
@@ -229,18 +232,19 @@ open class FreePanelActivity : Activity() {
                     if(!isUserGesture) return false
                     // Read only the destination of a user-opened popup; never inspect login forms or cookies.
                     val popup=WebView(this@FreePanelActivity)
+                    popups.add(popup)
                     popup.webViewClient=object: WebViewClient() {
                         override fun shouldOverrideUrlLoading(child: WebView,request: WebResourceRequest): Boolean {
                             val target=request.url.toString()
                             if(target=="about:blank") return false
                             if(WebPolicy.inside(target)) w.loadUrl(target) else if(WebPolicy.external(target)) openExternal(request.url)
-                            handler.post { popup.destroy() }
+                            handler.post { if(popups.remove(popup)) popup.destroy() }
                             return true
                         }
                     }
                     (resultMsg.obj as? WebView.WebViewTransport)?.webView=popup
                     resultMsg.sendToTarget()
-                    handler.postDelayed({runCatching {popup.destroy()}},30000)
+                    handler.postDelayed({if(popups.remove(popup)) runCatching {popup.destroy()}},30000)
                     return true
                 }
             }
@@ -355,7 +359,7 @@ open class FreePanelActivity : Activity() {
         }.show()
     }
     private fun help() { message("1. Otwórz ChatGPT i zaloguj się na swoje konto. Obowiązują limity Free lub Plus. Nie potrzebujesz klucza API.\n\n2. Zdjęcie: na stronie ChatGPT wybierz + i plik z gogli.\n\n3. Widok gry: Zrzut za 5 s → zgoda systemu → wróć do gry. Potem dołącz obraz w ChatGPT. Free nie przesyła ekranu ciągle.\n\n4. Głos: użyj ikony głosu na stronie i zezwól na mikrofon. Dostępność zależy od konta, przeglądarki i Horizon OS.\n\n5. Mini: użyj ikony Free · Mini. System Questa decyduje, przy których grach panel może być widoczny.\n\nJeśli panel zatrzyma się na logowaniu lub weryfikacji, wybierz Przeglądarka. Nie ma wspólnego logowania między panelem a przeglądarką.") }
-    private fun pageError(text: String) {if(webMode) {loading.visibility=View.GONE;address.text=text}}
+    private fun pageError(text: String) {pageProblem=text;if(webMode) {loading.visibility=View.GONE;address.text=text}}
     private fun message(text: String) {if(!isFinishing && !isDestroyed) AlertDialog.Builder(this).setMessage(text).setPositiveButton("Rozumiem",null).show()}
     private fun goBack() {if(webMode && web?.canGoBack()==true) web?.goBack() else if(webMode) showHome() else finish()}
     @Deprecated("Framework activity back navigation") override fun onBackPressed() {goBack()}
@@ -372,6 +376,7 @@ open class FreePanelActivity : Activity() {
     }
     override fun onDestroy() {
         cancelNativeRequests();handler.removeCallbacksAndMessages(null)
+        popups.forEach {runCatching {it.destroy()}};popups.clear()
         web?.let {(it.parent as? ViewGroup)?.removeView(it);it.destroy()};web=null
         super.onDestroy()
     }

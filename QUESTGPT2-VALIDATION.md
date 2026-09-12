@@ -1,48 +1,31 @@
-# QuestGPT 2.0.5 — wynik weryfikacji
+# QuestGPT 2.1.6 — wykonana walidacja, 12.09.2026
 
-Data: 11 września 2026. Dostarczono podpisaną aplikację `QuestGPT-2.apk`, pakiet `pl.somaskan.questgpt2`, versionCode `20005`.
+APK: `QuestGPT-2.1.apk`, 6 177 829 bajtów. Pakiet `pl.somaskan.questgpt2`, versionCode 20106.
 
-## Wynik
+Kod kompilacji: `627d85b215fb2945ba524cdeff43cf925e5e65b2`.
+[GitHub Actions: kompilacja i testy](https://github.com/SonGohan231/chat/actions/runs/34684917583).
 
-| Sprawdzenie | Rzeczywisty wynik |
-| --- | --- |
-| Kompilacja debug i release | PASS |
-| Testy protokołu | 8 wykonanych, 0 błędów, 0 pominiętych |
-| Testy Androida API 35, emulator Pixel C x86_64 | 4 wykonane, 0 błędów, 0 pominiętych |
-| Android Lint | 0 błędów, 19 ostrzeżeń |
-| Podpis gotowej APK | `apksigner verify`: PASS, APK Signature Scheme v3, RSA 3072 |
-| Kontrola zrzutów dużego i małego panelu | Pole pytania i cały przycisk Wyślij widoczne nad paskiem systemowym |
-| Fizyczny Meta Quest 3 / Horizon OS | NIE WYKONANO |
-| Rzeczywiste odpowiedzi i audio OpenAI z kluczem użytkownika | NIE WYKONANO |
+- Testy jednostkowe: **11/11 zaliczonych** (8 protokołu OpenAI, 3 konwersji PCM16).
+- Testy natywne na emulatorze Android 15 / API 35: **5/5 zaliczonych**, bez pominięć.
+- Panele: duży i Mini uruchamiają się; pole pytania pozostaje nad systemowym paskiem. W Mini przy szerokości 384 dp wszystkie 7 podstawowych przycisków są widoczne w granicach ekranu. Zrzut `mini-384dp.png` obejrzany po wykonaniu testu.
+- Android Keystore: zapis i odczyt klucza testowego; klucz nie występuje jawnie w zapisanych preferencjach.
+- Anulowanie zgody na ekran nie uruchamia projekcji.
+- Rzeczywista projekcja Androida zwraca niepustą klatkę; zrzut z opóźnieniem jest zapisany, a zatrzymanie projekcji usuwa bieżącą klatkę i zachowuje świadomie zapisany zrzut.
+- `lintDebug`: 0 błędów, 19 ostrzeżeń (m.in. teksty interfejsu w kodzie zamiast zasobów tłumaczeniowych).
+- Zbudowano debug i release. Końcową release APK podpisano poza repozytorium kluczem QuestGPT 2. Sprawdzenie `apksigner verify` zakończone powodzeniem, podpis v3.
+- SHA-256 APK: `eeb28c02280c688221d7010b7a4a0c5ba941a30445a05410306f4cc6a7d65c57`.
+- SHA-256 certyfikatu: `b6f3aaa694e26894b2373a55940346c64ec13904f9681c116cbcdcbf9e9b4234` — taki sam jak w QuestGPT 2.0.5.
 
-Testy instrumentacyjne uruchomiono na wariancie debug. Wariant release zbudowano z tego samego kodu, wyrównano i podpisano osobno. Nie jest to dowód pełnej zgodności z Horizon OS ani test instalacji podpisanej APK na fizycznym urządzeniu.
+## Czego nie potwierdzono
 
-## Co faktycznie sprawdzono
+Nie podłączono fizycznego Questa 3. Nie wykonano płatnego wywołania OpenAI: nie było dostępnego klucza, a połączenie OpenAI Platform nie udostępniło celu konfiguracji. Testy protokołu sprawdzają format i obsługę danych, nie są dowodem skutecznego połączenia z usługą.
 
-1. Oba natywne panele uruchamiają się, zachowują rozmowę, mają dostępny przycisk wysyłania; przycisk mieści się nad paskiem systemowym i ma pełny obszar dotyku. Live bez klucza otwiera konfigurację i nie udaje aktywnej sesji.
-2. Testowy, nieważny klucz przechodzi zapis i odczyt Android Keystore; tekst jawny nie trafia do ustawień; usunięcie usuwa dostęp do klucza. Ten test nie wysyła żądania sieciowego.
-3. Anulowanie zgody nie uruchamia przechwytywania.
-4. Systemowa zgoda Androida rzeczywiście uruchamia MediaProjection. Otrzymano niepustą klatkę z ImageReader. Zatrzymanie usługi wyłącza przechwytywanie i usuwa klatkę ze stanu.
+Nie potwierdzono zachowania mikrofonu, przechwytywania ani widoczności Mini w konkretnej grze Horizon OS. Przypinanie paneli i praca usług w tle pozostają pod kontrolą systemu. Nie można gwarantować stałej nakładki w każdej aplikacji. Nie wykonano osobnego testu z otwartą klawiaturą; dostosowanie interfejsu korzysta z Android WindowInsets.
 
-Osiem testów jednostkowych obejmuje gotowość sesji po potwierdzeniu serwera, stare/puste/przyszłe klatki, formaty odpowiedzi Responses, odmowy i odpowiedzi niepełne, historię multimodalną, konfigurację audio Realtime GA i maskowanie kluczy w błędach. To kontrola protokołu na danych testowych, nie odpowiedzi prawdziwego serwera.
+Na goglach po instalacji należy zapisać własny klucz w **Połączeniu**, wykonać test odpowiedzi API, uruchomić **Live**, zatwierdzić **Ekran**, przejść do gry i sprawdzić **Widok → Podgląd**. Samo uruchomienie usługi nie oznacza, że konkretna gra udostępnia obraz.
 
-Ostrzeżenia Lint dotyczą API/wersji zależności, ustawień kopii zapasowej, statycznych referencji oraz polskich tekstów wpisanych bezpośrednio w kodzie. Nie przedstawiono ich jako zera ostrzeżeń. Projekt ma minSdk 32 i targetSdk 35. Ostrzeżenie API dotyczy stałej `RECEIVER_NOT_EXPORTED` w rejestracji odbiornika; test wykonano na API 35, zachowania na API 32 nie potwierdzono.
-
-## Powtarzalność i plik wydania
-
-- Kod zbudowanej aplikacji: [`a41896e59915164c2b253a098bb9905277dbb4f6`](https://github.com/SonGohan231/chat/commit/a41896e59915164c2b253a098bb9905277dbb4f6).
-- [Końcowy przebieg CI 34595588321](https://github.com/SonGohan231/chat/actions/runs/34595588321): wszystkie kroki zakończone sukcesem.
-- Artefakt testów: `QuestGPT-2-test-evidence`, ID `10262332483`. Zawiera raporty HTML/XML, logi Androida i zrzuty `main.png`, `mini.png`, `screen-sharing.png`.
-- Rozmiar podpisanej APK: `6165541` bajtów.
-- SHA-256 APK: `a77e52c93a6e88cf825d2a0a143289e3fd6563bb38fd08c796e4bbfcb4e301b5`.
-- SHA-256 certyfikatu: `b6f3aaa694e26894b2373a55940346c64ec13904f9681c116cbcdcbf9e9b4234`.
-- [Pobieranie i instrukcja](https://questgpt-2.songoku222.chatgpt.site).
-- [Kopia APK w Google Drive](https://drive.google.com/file/d/1uFZ121bP_TMlUa99zNQJ6UvNHgnyvm03/view?usp=drivesdk).
-
-Stronę zapisano i opublikowano prywatnie jako wersję 1; system publikacji potwierdził sukces. Sprawdzono lokalne odnośniki, składnię JavaScript i zachowanie listy instalacyjnej w izolowanym środowisku. Nie wykonano testu strony w przeglądarce ani testu WebMCP w przeglądarce z obsługą tego API.
-
-## Ograniczenia wymagające sprawdzenia w goglach
-
-Mini korzysta z paneli udostępnianych przez Horizon OS. Brak gwarancji stałej nakładki nad każdą grą. Mikrofon w tle, dostęp do widoku aplikacji oraz ponowne otwarcie Mini należy sprawdzić w konkretnej grze. Udostępnianie wysyła klatki co około 2 sekundy w Live; chronione treści mogą pozostać puste. Klucz OpenAI trzeba skonfigurować w aplikacji; API ma osobne rozliczenie od ChatGPT.
-
-Procedura próby na fizycznym Queście jest w [instrukcji](QUESTGPT2.md). Tych pozycji nie oznaczono jako zaliczonych automatycznie.
+Dokumentacja implementacji:
+- [Meta MediaProjection](https://developers.meta.com/horizon/documentation/native/native-media-projection/)
+- [Funkcje Androida na Horizon OS](https://developers.meta.com/horizon/documentation/android-apps/features-overview/)
+- [OpenAI Realtime](https://developers.openai.com/api/docs/guides/realtime)
+- [OpenAI WebSockets](https://developers.openai.com/api/docs/guides/voice-websockets)

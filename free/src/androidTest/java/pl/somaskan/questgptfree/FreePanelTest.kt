@@ -39,9 +39,10 @@ class FreePanelTest {
         assertFalse(device.hasObject(By.text("Połączenie")))
         assertFalse(device.hasObject(By.text("Zapisz i testuj")))
         val info=context.packageManager.getPackageInfo(context.packageName,PackageManager.GET_SERVICES or PackageManager.GET_PERMISSIONS)
-        assertEquals(1,info.services.size)
-        assertTrue(info.services[0].name.endsWith("SnapshotService"))
-        assertFalse(info.requestedPermissions.contains("android.permission.FOREGROUND_SERVICE_MICROPHONE"))
+        val services=info.services.orEmpty()
+        assertEquals(1,services.size)
+        assertTrue(services[0].name.endsWith("SnapshotService"))
+        assertFalse(info.requestedPermissions.orEmpty().contains("android.permission.FOREGROUND_SERVICE_MICROPHONE"))
         assertFalse(runCatching {Class.forName("pl.somaskan.questgpt2.Api")}.isSuccess)
         capture("free-home")
     }

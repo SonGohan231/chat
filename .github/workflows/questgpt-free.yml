@@ -20,7 +20,7 @@ jobs:
         with:
           gradle-version: '8.9'
       - name: Build Free and test URL trust boundaries
-        run: gradle :free:testDebugUnitTest :free:assembleDebug :free:assembleRelease :free:lintDebug --stacktrace
+        run: gradle :free:testDebugUnitTest :free:assembleDebug :free:assembleDebugAndroidTest :free:assembleRelease :free:lintDebug --stacktrace
       - name: Prepare unsigned release
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -P 16 -f 4 free/build/outputs/apk/release/free-release-unsigned.apk QuestGPT-Free-aligned.apk

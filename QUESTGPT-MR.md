@@ -37,4 +37,13 @@ Nie przeprowadzono testu na fizycznym Meta Quest ani z opłaconym połączeniem 
 - [Oficjalny przykład Meta dla przejścia między MR i panelem 2D](https://github.com/meta-quest/Meta-Spatial-SDK-Samples/blob/f233e2327b95f9871b75bdba867d6fdd726f07cc/HybridSample/app/src/main/java/com/meta/spatial/samples/hybridsample/HybridSampleActivity.kt).
 - [Przesyłanie obrazów w Realtime](https://developers.openai.com/api/docs/guides/realtime-conversations#image-inputs).
 
-Wynik końcowej kompilacji i suma kontrolna APK zostaną zapisane po zakończeniu testów.
+## Zweryfikowane wydanie 2.3.13
+
+- APK: `QuestGPT-MR.apk`, 31,206,195 bajtów; ARM64, Android API 34+.
+- SHA-256 APK: `97ea508835c46abbc11c424aa23530e3f2b34dfaed11fb47beedda7949a80304`.
+- Certyfikat: `b6f3aaa694e26894b2373a55940346c64ec13904f9681c116cbcdcbf9e9b4234` — zgodny z wcześniejszym QuestGPT 2.
+- Kod APK: `8e3281eb38f098cc185b926cd21fecb206c9212d`. Późniejszy commit zmienia wyłącznie pulę maszyn CI.
+- [Zakończony pomyślnie build i testy](https://github.com/SonGohan231/chat/actions/runs/34714950430): 15 testów jednostkowych, 7 testów Androida, 0 błędów lint.
+- Podpis APK v3, pakiet i wersję odczytano z końcowego pliku. Zweryfikowano obecność renderera Meta i OpenXR dla ARM64. Biblioteki są kompresowane w APK i wypakowywane przez Androida podczas instalacji.
+- Brak testu na fizycznym Queście i z płatnym API; zakres weryfikacji pozostaje taki jak opisano powyżej.
+

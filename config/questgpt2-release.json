@@ -1,0 +1,19 @@
+{
+  "abi": "arm64-v8a",
+  "apk": "https://drive.google.com/file/d/1a-qCj0N3K3RNmRbqe00z3iE_W1EQuWU0/view?usp=drivesdk",
+  "apkFileName": "QuestGPT-MR.apk",
+  "applicationId": "pl.somaskan.questgpt2",
+  "buildUrl": "https://github.com/SonGohan231/chat/actions/runs/34714950430",
+  "certificateSha256": "b6f3aaa694e26894b2373a55940346c64ec13904f9681c116cbcdcbf9e9b4234",
+  "hardwareTested": false,
+  "installationUrl": "https://questgpt-2.songoku222.chatgpt.site",
+  "liveOpenAITested": false,
+  "minAndroidApi": 34,
+  "name": "QuestGPT MR",
+  "releasedAt": "2026-09-12",
+  "sha256": "97ea508835c46abbc11c424aa23530e3f2b34dfaed11fb47beedda7949a80304",
+  "sizeBytes": 31206195,
+  "sourceCommit": "8e3281eb38f098cc185b926cd21fecb206c9212d",
+  "versionCode": 20313,
+  "versionName": "2.3.13"
+}

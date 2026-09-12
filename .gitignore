@@ -10,3 +10,6 @@
 app/build/
 server/node_modules/
 server/.env
+reborn/build/
+*.jks
+*.keystore
